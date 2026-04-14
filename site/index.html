@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pickleball League Portal</title>
+    <meta
+      name="description"
+      content="League portal for pickleball schedules, scores, and leaderboard."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-aurora" aria-hidden="true"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <h1>League Portal</h1>
+        <p>View current games, scores, and leaderboard by league passcode.</p>
+      </header>
+
+      <section id="loginSection" class="panel">
+        <h2>Enter Passcode</h2>
+        <p class="muted">Your passcode unlocks a specific league view.</p>
+        <form id="passcodeForm" class="passcode-form">
+          <input
+            id="passcodeInput"
+            type="password"
+            autocomplete="off"
+            placeholder="Enter league passcode"
+            required
+          />
+          <button type="submit">Enter Portal</button>
+        </form>
+        <p id="loginError" class="error" role="alert"></p>
+      </section>
+
+      <section id="portalSection" class="hidden">
+        <div class="panel portal-header">
+          <div>
+            <h2 id="leagueTitle">League</h2>
+            <p id="leagueSubtitle" class="muted"></p>
+            <p class="muted">
+              For questions contact Molly &amp; Mir Pengel
+              <a href="mailto:pickleonpeeps@gmail.com">&lt;pickleonpeeps@gmail.com&gt;</a>
+            </p>
+            <p>
+              <a href="https://tally.so/r/oborJM" target="_blank" rel="noopener noreferrer">Submit Form</a>
+            </p>
+          </div>
+        </div>
+
+        <div class="panel filters">
+          <h3>Filter</h3>
+          <div class="filter-row">
+            <label>
+              Team Search
+              <input id="teamSearch" type="search" placeholder="Type team name" />
+            </label>
+            <label>
+              Team Dropdown
+              <select id="teamSelect">
+                <option value="">All teams</option>
+              </select>
+            </label>
+            <button id="clearFilters" class="ghost" type="button">Clear</button>
+          </div>
+        </div>
+
+        <div id="loadingState" class="panel hidden">Loading league data...</div>
+        <div id="portalError" class="panel error hidden"></div>
+
+        <section class="panel">
+          <div class="tabs" role="tablist" aria-label="League tabs">
+            <button id="tabGames" class="tab-btn active" role="tab" aria-selected="true" data-tab="games" type="button">Scheduled Games</button>
+            <button id="tabLeaderboard" class="tab-btn" role="tab" aria-selected="false" data-tab="leaderboard" type="button">Leaderboard</button>
+          </div>
+
+          <div id="panelGames" class="tab-panel">
+            <h3>Scheduled Games</h3>
+            <div id="gamesAccordion"></div>
+          </div>
+
+          <div id="panelLeaderboard" class="tab-panel hidden">
+            <h3>Leaderboard</h3>
+            <div id="leaderboardTable" class="table-wrap"></div>
+
+            <div class="detail-head">
+              <h3>Leaderboard Details By Round</h3>
+              <div class="metric-toggle" role="radiogroup" aria-label="Leaderboard detail metric">
+                <label><input type="radio" name="detailMetric" value="wins" checked /> Wins</label>
+                <label><input type="radio" name="detailMetric" value="points" /> Points</label>
+              </div>
+            </div>
+            <div id="leaderboardDetailTable" class="table-wrap"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
