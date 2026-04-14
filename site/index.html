@@ -105,6 +105,65 @@
       </section>
     </main>
 
+    <div id="submitModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal="true"></div>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="submitModalTitle">
+        <header class="modal-header">
+          <h3 id="submitModalTitle">Submit Match Result</h3>
+          <button id="closeSubmitModal" type="button" class="ghost">Close</button>
+        </header>
+
+        <div id="submitStepForm">
+          <p class="muted">Enter match details and continue to confirmation.</p>
+          <form id="pendingSubmitForm" class="modal-form">
+            <label>
+              Team A
+              <input id="submitTeamA" type="text" readonly />
+            </label>
+            <label>
+              Team B
+              <input id="submitTeamB" type="text" readonly />
+            </label>
+            <label>
+              Scores
+              <input id="submitScores" type="text" placeholder="11-7, 5-11, 11-5, 11-5" required />
+            </label>
+            <label>
+              Winning Team
+              <select id="submitWinningTeam" required>
+                <option value="">Select winner</option>
+              </select>
+            </label>
+            <label>
+              Date
+              <input id="submitDate" type="date" required />
+            </label>
+            <label>
+              Your Email
+              <input id="submitEmail" type="email" placeholder="name@example.com" required />
+            </label>
+            <label>
+              Comments
+              <textarea id="submitComments" rows="3" placeholder="Optional comment"></textarea>
+            </label>
+            <div class="modal-actions">
+              <button id="toConfirmBtn" type="button">Next</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="submitStepConfirm" class="hidden">
+          <p class="muted">Please confirm before submitting.</p>
+          <div id="submitConfirmSummary" class="confirm-box"></div>
+          <p id="submitModalError" class="error"></p>
+          <div class="modal-actions">
+            <button id="backToEditBtn" type="button" class="ghost">Back</button>
+            <button id="confirmSubmitBtn" type="button">Submit</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <script src="./config.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
