@@ -57,6 +57,7 @@ const els = {
   backToEditBtn: document.getElementById("backToEditBtn"),
   confirmSubmitBtn: document.getElementById("confirmSubmitBtn"),
   submitConfirmSummary: document.getElementById("submitConfirmSummary"),
+  submitFormError: document.getElementById("submitFormError"),
   submitModalError: document.getElementById("submitModalError")
 };
 
@@ -418,6 +419,9 @@ function onGamesAccordionClick(event) {
 function openSubmitModal(rowId, row) {
   state.pendingRowId = rowId;
   state.pendingDraft = null;
+  if (els.submitFormError) {
+    els.submitFormError.textContent = "";
+  }
   els.submitModalError.textContent = "";
   els.pendingSubmitForm.reset();
 
@@ -457,6 +461,9 @@ function closeSubmitModal() {
   els.submitModal.setAttribute("aria-hidden", "true");
   state.pendingRowId = "";
   state.pendingDraft = null;
+  if (els.submitFormError) {
+    els.submitFormError.textContent = "";
+  }
   els.submitModalError.textContent = "";
 }
 
@@ -467,6 +474,9 @@ function setSubmitStep(step) {
 }
 
 function goToConfirmStep() {
+  if (els.submitFormError) {
+    els.submitFormError.textContent = "";
+  }
   els.submitModalError.textContent = "";
   if (!els.pendingSubmitForm.reportValidity()) {
     return;
@@ -474,30 +484,40 @@ function goToConfirmStep() {
 
   const row = state.pendingRowsById[state.pendingRowId];
   if (!row) {
-    els.submitModalError.textContent = "The selected match could not be found.";
+    if (els.submitFormError) {
+      els.submitFormError.textContent = "The selected match could not be found.";
+    }
     return;
   }
 
   const parsedScores = parseScoreInputs();
   if (!parsedScores.ok) {
-    els.submitModalError.textContent = parsedScores.message;
+    if (els.submitFormError) {
+      els.submitFormError.textContent = parsedScores.message;
+    }
     return;
   }
 
   const derivedWinner = deriveWinnerFromScores(parsedScores.games);
   if (!derivedWinner) {
-    els.submitModalError.textContent = "Scores must show a winner with 3 game wins (best of 5).";
+    if (els.submitFormError) {
+      els.submitFormError.textContent = "Scores must show a winner with 3 game wins (best of 5).";
+    }
     return;
   }
 
   const selectedWinner = els.submitWinningTeam.value.trim();
   if (!selectedWinner) {
-    els.submitModalError.textContent = "Select the winning team.";
+    if (els.submitFormError) {
+      els.submitFormError.textContent = "Select the winning team.";
+    }
     return;
   }
 
   if (selectedWinner !== derivedWinner) {
-    els.submitModalError.textContent = "Winning Team must match the team that won 3 games.";
+    if (els.submitFormError) {
+      els.submitFormError.textContent = `Please double-check: scores indicate ${derivedWinner} as winner, but you selected ${selectedWinner}.`;
+    }
     return;
   }
 
@@ -1081,6 +1101,10 @@ function renderCumulativePointsChart(orderedTeams) {
   };
 
   const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
+  const rankMarkerOffsetX = 4;
+  const rankMarkerOffsetY = -4;
+  const endTeamLabelOffsetX = 18;
+  const endTeamLabelOffsetY = 4;
 
   const yTickLines = Array.from({ length: maxRank }, (_, idx) => {
     const rank = idx + 1;
@@ -1111,13 +1135,13 @@ function renderCumulativePointsChart(orderedTeams) {
           const cx = xFor(valueIdx);
           const cy = yFor(value);
           return `<circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" />
-            <text x="${cx + 4}" y="${cy - 4}" class="chart-point-rank">${escapeHtml(String(value))}</text>`;
+            <text x="${cx + rankMarkerOffsetX}" y="${cy + rankMarkerOffsetY}" class="chart-point-rank">${escapeHtml(String(value))}</text>`;
         })
         .join("");
 
       const lastRank = series.values.at(-1);
       const endLabel = lastRank
-        ? `<text x="${xFor(rounds.length - 1) + 8}" y="${yFor(lastRank) + 4}" class="chart-end-label">${escapeHtml(series.team)}</text>`
+        ? `<text x="${xFor(rounds.length - 1) + endTeamLabelOffsetX}" y="${yFor(lastRank) + endTeamLabelOffsetY}" class="chart-end-label">${escapeHtml(series.team)}</text>`
         : "";
 
       return `
