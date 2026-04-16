@@ -1,14 +1,14 @@
 :root {
-  --bg: #f3efe6;
-  --ink: #141311;
-  --ink-soft: #4d4a45;
-  --panel: rgba(255, 255, 255, 0.78);
-  --line: rgba(20, 19, 17, 0.12);
+  --bg: #eef2f6;
+  --ink: #17212b;
+  --ink-soft: #5b6978;
+  --panel: rgba(255, 255, 255, 0.84);
+  --line: rgba(23, 33, 43, 0.1);
   --primary: #0a9d75;
   --primary-strong: #0a6f56;
   --warning: #b91c1c;
   --required-bg: #fff9cf;
-  --shadow: 0 14px 42px rgba(10, 28, 24, 0.14);
+  --shadow: 0 14px 38px rgba(15, 23, 33, 0.12);
 }
 
 * {
@@ -20,8 +20,10 @@ body {
   min-height: 100vh;
   font-family: "Space Grotesk", sans-serif;
   color: var(--ink);
-  background: radial-gradient(circle at 15% 10%, #ffd887 0%, transparent 40%),
-    radial-gradient(circle at 80% 20%, #97f5db 0%, transparent 38%), var(--bg);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(72, 94, 116, 0.16) 0%, transparent 42%),
+    radial-gradient(circle at 88% 14%, rgba(10, 157, 117, 0.12) 0%, transparent 36%),
+    linear-gradient(160deg, #f6f8fb 0%, #e9eef4 52%, #eef2f6 100%);
   overflow-x: hidden;
 }
 
@@ -29,8 +31,8 @@ body {
   position: fixed;
   inset: -10% -20% auto -20%;
   height: 56vh;
-  background: linear-gradient(110deg, rgba(255, 126, 71, 0.22), rgba(10, 157, 117, 0.25));
-  filter: blur(34px);
+  background: linear-gradient(108deg, rgba(98, 122, 148, 0.2), rgba(10, 157, 117, 0.16));
+  filter: blur(42px);
   pointer-events: none;
   z-index: 0;
 }
@@ -38,9 +40,9 @@ body {
 .bg-grid {
   position: fixed;
   inset: 0;
-  background-image: linear-gradient(to right, rgba(20, 19, 17, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(20, 19, 17, 0.04) 1px, transparent 1px);
-  background-size: 44px 44px;
+  background-image: linear-gradient(to right, rgba(23, 33, 43, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(23, 33, 43, 0.035) 1px, transparent 1px);
+  background-size: 52px 52px;
   mask-image: radial-gradient(circle at center, black, transparent 78%);
   pointer-events: none;
   z-index: 0;
@@ -77,7 +79,7 @@ body {
   border-radius: 18px;
   padding: 16px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px);
   min-width: 0;
 }
 
@@ -449,6 +451,13 @@ button.ghost {
   fill: #5e5a54;
   font-size: 11px;
   font-family: "IBM Plex Mono", monospace;
+}
+
+.chart-point-rank {
+  fill: #4f5d6b;
+  font-size: 9px;
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
 }
 
 .chart-end-label {

@@ -1,4 +1,5 @@
 const config = window.APP_CONFIG;
+const PORTAL_ACCESS_LOG_TABLE = "portal_access_log";
 
 const state = {
   leagueValue: null,
@@ -172,6 +173,9 @@ async function onPasscodeSubmit(event) {
     els.portalSection.classList.remove("hidden");
     els.leagueTitle.textContent = state.leagueName;
     els.leagueSubtitle.textContent = `League key: ${state.leagueValue}`;
+
+    // Fire-and-forget access logging; portal entry should not block on telemetry.
+    logPortalAccess().catch(() => {});
 
     await loadLeagueData();
   } catch (error) {
@@ -885,8 +889,7 @@ function generateUuid() {
 function renderLeaderboard() {
   const view = config.views.leaderboard;
   const scoreView = config.views.scores;
-  const rows = state.leaderboard
-    .filter((row) => teamMatch([row[view.teamColumn]]))
+  const sortedRows = [...state.leaderboard]
     .sort((a, b) => {
       const winsDiff = Number(b[view.winsColumn] ?? 0) - Number(a[view.winsColumn] ?? 0);
       if (winsDiff !== 0) return winsDiff;
@@ -894,6 +897,10 @@ function renderLeaderboard() {
       if (pointsDiff !== 0) return pointsDiff;
       return String(a[view.teamColumn] || "").localeCompare(String(b[view.teamColumn] || ""));
     });
+  const rankByTeam = new Map(
+    sortedRows.map((row, index) => [String(row[view.teamColumn] || "").trim(), index + 1])
+  );
+  const rows = sortedRows.filter((row) => teamMatch([row[view.teamColumn]]));
 
   const gamesPlayedByTeam = new Map();
   const detailRowsByTeam = new Map();
@@ -937,8 +944,8 @@ function renderLeaderboard() {
       ? `<div class="leaderboard-cards">
           ${rows
             .map((row, index) => {
-              const rank = index + 1;
               const team = String(row[view.teamColumn] || "Team");
+              const rank = Number(rankByTeam.get(team) || index + 1);
               const wins = Number(row[view.winsColumn] ?? 0);
               const gamesPlayed = Number(gamesPlayedByTeam.get(team) || 0);
               const points = Number(row[view.pointsColumn] ?? 0);
@@ -998,29 +1005,40 @@ function renderCumulativePointsChart(orderedTeams) {
     return "";
   }
 
+  const allTeams = [...state.leaderboard]
+    .sort((a, b) => {
+      const winsDiff = Number(b[config.views.leaderboard.winsColumn] ?? 0) - Number(a[config.views.leaderboard.winsColumn] ?? 0);
+      if (winsDiff !== 0) return winsDiff;
+      const pointsDiff = Number(b[config.views.leaderboard.pointsColumn] ?? 0) - Number(a[config.views.leaderboard.pointsColumn] ?? 0);
+      if (pointsDiff !== 0) return pointsDiff;
+      return String(a[config.views.leaderboard.teamColumn] || "").localeCompare(String(b[config.views.leaderboard.teamColumn] || ""));
+    })
+    .map((row) => String(row[config.views.leaderboard.teamColumn] || "").trim())
+    .filter(Boolean);
+
   const pointsByTeamRound = new Map();
-  const teamSet = new Set(orderedTeams.filter(Boolean));
-  filtered.forEach((row) => {
+  const globalTeamSet = new Set(allTeams);
+  state.scores.forEach((row) => {
     const team = String(row[scoreView.teamColumn] || "").trim();
-    if (!team || !teamSet.has(team)) return;
+    if (!team || !globalTeamSet.has(team)) return;
 
     const round = String(row[scoreView.roundColumn] || "Round").trim();
     const key = `${team}::${round}`;
     pointsByTeamRound.set(key, Number(pointsByTeamRound.get(key) || 0) + Number(row[scoreView.pointsColumn] ?? 0));
   });
 
-  const teams = orderedTeams.filter(Boolean);
-  const cumulativeByTeam = new Map(teams.map((team) => [team, 0]));
-  const rankByTeam = new Map(teams.map((team) => [team, []]));
+  const displayedTeams = orderedTeams.filter(Boolean);
+  const cumulativeByTeam = new Map(allTeams.map((team) => [team, 0]));
+  const rankByTeam = new Map(allTeams.map((team) => [team, []]));
 
   rounds.forEach((round) => {
-    teams.forEach((team) => {
+    allTeams.forEach((team) => {
       const key = `${team}::${round}`;
       const updated = Number(cumulativeByTeam.get(team) || 0) + Number(pointsByTeamRound.get(key) || 0);
       cumulativeByTeam.set(team, updated);
     });
 
-    const ranked = [...teams].sort((teamA, teamB) => {
+    const ranked = [...allTeams].sort((teamA, teamB) => {
       const diff = Number(cumulativeByTeam.get(teamB) || 0) - Number(cumulativeByTeam.get(teamA) || 0);
       if (diff !== 0) return diff;
       return teamA.localeCompare(teamB);
@@ -1031,8 +1049,8 @@ function renderCumulativePointsChart(orderedTeams) {
     });
   });
 
-  const teamSeries = teams.map((team) => ({ team, values: rankByTeam.get(team) || [] }));
-  const maxRank = Math.max(1, teamSeries.length);
+  const teamSeries = displayedTeams.map((team) => ({ team, values: rankByTeam.get(team) || [] }));
+  const maxRank = Math.max(1, allTeams.length);
 
   const width = 780;
   const height = 320;
@@ -1062,8 +1080,7 @@ function renderCumulativePointsChart(orderedTeams) {
     return padTop + ((rank - 1) / (maxRank - 1)) * plotHeight;
   };
 
-  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2"];
-  const highlightedTeams = new Set(teams.slice(0, 3));
+  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
 
   const yTickLines = Array.from({ length: maxRank }, (_, idx) => {
     const rank = idx + 1;
@@ -1083,15 +1100,19 @@ function renderCumulativePointsChart(orderedTeams) {
 
   const seriesLines = teamSeries
     .map((series, idx) => {
-      const isHighlighted = highlightedTeams.has(series.team);
-      const color = isHighlighted ? linePalette[idx % linePalette.length] : "rgba(20, 19, 17, 0.25)";
-      const strokeWidth = isHighlighted ? 2.4 : 1.5;
+      const color = linePalette[idx % linePalette.length];
+      const strokeWidth = 2;
       const points = series.values
         .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
         .join(" ");
 
       const pointDots = series.values
-        .map((value, valueIdx) => `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${isHighlighted ? 2.8 : 2.2}" fill="${color}" />`)
+        .map((value, valueIdx) => {
+          const cx = xFor(valueIdx);
+          const cy = yFor(value);
+          return `<circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" />
+            <text x="${cx + 4}" y="${cy - 4}" class="chart-point-rank">${escapeHtml(String(value))}</text>`;
+        })
         .join("");
 
       const lastRank = series.values.at(-1);
@@ -1110,7 +1131,7 @@ function renderCumulativePointsChart(orderedTeams) {
   return `
     <section class="leaderboard-chart">
       <h4>Rank Movement by Round</h4>
-      <p class="muted">Lower rank is better. Top 3 teams are highlighted.</p>
+      <p class="muted">Lower rank is better.</p>
       <div class="chart-wrap">
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Rank over round bump chart by team">
           <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" class="chart-axis" />
@@ -1227,6 +1248,9 @@ function renderCumulativeRibbonChart(orderedTeams) {
       const linePoints = series.values
         .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
         .join(" ");
+      const pointDots = series.values
+        .map((value, valueIdx) => `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${isTop ? "2.6" : "1.9"}" fill="${color}" fill-opacity="${isTop ? "0.95" : "0.6"}" />`)
+        .join("");
 
       const endValue = series.values.at(-1);
       const endLabel = typeof endValue === "number"
@@ -1235,6 +1259,7 @@ function renderCumulativeRibbonChart(orderedTeams) {
 
       return `
         <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${isTop ? "0.9" : "0.45"}" stroke-width="${isTop ? "2.2" : "1.4"}" />
+        ${pointDots}
         ${endLabel}
       `;
     })
@@ -1242,8 +1267,8 @@ function renderCumulativeRibbonChart(orderedTeams) {
 
   return `
     <section class="leaderboard-chart leaderboard-chart-ribbon">
-      <h4>Cumulative Points Movement (Ribbon)</h4>
-      <p class="muted">Higher is better. Top 4 teams are emphasized.</p>
+      <h4>Cumulative Points Movement</h4>
+      <p class="muted">Higher is better.</p>
       <div class="chart-wrap">
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Cumulative points movement by round ribbon chart">
           <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" class="chart-axis" />
@@ -1310,6 +1335,23 @@ function compareRoundLabel(a, b) {
 
 function compareRoundLabelDesc(a, b) {
   return compareRoundLabel(b, a);
+}
+
+async function logPortalAccess() {
+  const details = await collectSubmissionClientDetails();
+  const payload = {
+    id: generateUuid(),
+    event_type: "enter_portal",
+    league_id: String(state.leagueValue || ""),
+    league_name: state.leagueName || null,
+    entered_at: formatSubmittedAtUtc(),
+    ipdetails: JSON.stringify({
+      ...details,
+      event: "enter_portal"
+    })
+  };
+
+  await restInsert(PORTAL_ACCESS_LOG_TABLE, payload);
 }
 
 function formatNumber(value, metric) {
