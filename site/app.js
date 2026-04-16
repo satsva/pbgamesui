@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const config = window.APP_CONFIG;
 
 const state = {
@@ -35,6 +33,7 @@ const els = {
   tabLeaderboard: document.getElementById("tabLeaderboard"),
   panelGames: document.getElementById("panelGames"),
   panelLeaderboard: document.getElementById("panelLeaderboard"),
+  refreshGamesBtn: document.getElementById("refreshGamesBtn"),
   gamesAccordion: document.getElementById("gamesAccordion"),
   leaderboardTable: document.getElementById("leaderboardTable"),
   leaderboardDetailTable: document.getElementById("leaderboardDetailTable"),
@@ -44,9 +43,11 @@ const els = {
   submitStepForm: document.getElementById("submitStepForm"),
   submitStepConfirm: document.getElementById("submitStepConfirm"),
   pendingSubmitForm: document.getElementById("pendingSubmitForm"),
+  submitMatchup: document.getElementById("submitMatchup"),
   submitTeamA: document.getElementById("submitTeamA"),
   submitTeamB: document.getElementById("submitTeamB"),
-  submitScores: document.getElementById("submitScores"),
+  submitGameInputs: document.querySelectorAll(".game-score-input"),
+  submitScoresHint: document.getElementById("submitScoresHint"),
   submitWinningTeam: document.getElementById("submitWinningTeam"),
   submitDate: document.getElementById("submitDate"),
   submitEmail: document.getElementById("submitEmail"),
@@ -63,10 +64,6 @@ if (!config || !config.supabaseUrl || !config.supabaseAnonKey) {
 } else {
   wireEvents();
 }
-
-const supabase = config?.supabaseUrl
-  ? createClient(config.supabaseUrl, config.supabaseAnonKey)
-  : null;
 
 function wireEvents() {
   els.passcodeForm.addEventListener("submit", onPasscodeSubmit);
@@ -103,11 +100,24 @@ function wireEvents() {
   if (els.gamesAccordion) {
     els.gamesAccordion.addEventListener("click", onGamesAccordionClick);
   }
+  if (els.refreshGamesBtn) {
+    els.refreshGamesBtn.addEventListener("click", () => {
+      loadLeagueData().catch((error) => {
+        showPortalError(error?.message || "Could not refresh games.");
+      });
+    });
+  }
   if (els.closeSubmitModal) {
     els.closeSubmitModal.addEventListener("click", closeSubmitModal);
   }
   if (els.toConfirmBtn) {
     els.toConfirmBtn.addEventListener("click", goToConfirmStep);
+  }
+  if (els.submitGameInputs && els.submitGameInputs.length) {
+    els.submitGameInputs.forEach((input) => {
+      input.addEventListener("input", onScoreInputChanged);
+      input.addEventListener("blur", onScoreInputChanged);
+    });
   }
   if (els.backToEditBtn) {
     els.backToEditBtn.addEventListener("click", () => setSubmitStep("form"));
@@ -129,39 +139,44 @@ async function onPasscodeSubmit(event) {
   hideLoginError();
   hidePortalError();
 
+  showLoginError("Checking passcode...");
+
   const rawPasscode = els.passcodeInput.value.trim();
   if (!rawPasscode) {
     showLoginError("Enter a valid passcode.");
     return;
   }
 
-  const passcodes = config.views.passcodes;
-  const { data, error } = await supabase
-    .from(passcodes.name)
-    .select("*")
-    .eq(passcodes.passcodeColumn, rawPasscode)
-    .maybeSingle();
+  try {
+    const passcodes = config.views.passcodes;
+    const { data, error } = await restSelect(passcodes.name, {
+      filters: [{ column: passcodes.passcodeColumn, value: rawPasscode }],
+      maybeSingle: true
+    });
 
-  if (error) {
-    showLoginError(`Login failed: ${error.message}`);
-    return;
+    if (error) {
+      showLoginError(`Login failed: ${error.message}`);
+      return;
+    }
+
+    if (!data) {
+      showLoginError("Invalid passcode.");
+      return;
+    }
+
+    state.leagueValue = data[passcodes.leagueColumn];
+    state.leagueName = data[passcodes.leagueNameColumn] || String(state.leagueValue);
+    state.passcode = rawPasscode;
+
+    els.loginSection.classList.add("hidden");
+    els.portalSection.classList.remove("hidden");
+    els.leagueTitle.textContent = state.leagueName;
+    els.leagueSubtitle.textContent = `League key: ${state.leagueValue}`;
+
+    await loadLeagueData();
+  } catch (error) {
+    showLoginError(`Login failed: ${error?.message || "Unexpected error"}`);
   }
-
-  if (!data) {
-    showLoginError("Invalid passcode.");
-    return;
-  }
-
-  state.leagueValue = data[passcodes.leagueColumn];
-  state.leagueName = data[passcodes.leagueNameColumn] || String(state.leagueValue);
-  state.passcode = rawPasscode;
-
-  els.loginSection.classList.add("hidden");
-  els.portalSection.classList.remove("hidden");
-  els.leagueTitle.textContent = state.leagueName;
-  els.leagueSubtitle.textContent = `League key: ${state.leagueValue}`;
-
-  await loadLeagueData();
 }
 
 async function loadLeagueData() {
@@ -196,17 +211,17 @@ async function loadLeagueData() {
 
 async function selectLeagueRows(viewConfig) {
   const runQuery = async (leagueColumn) => {
-    let query = supabase.from(viewConfig.name).select("*");
+    const filters = [];
 
     if (leagueColumn) {
-      query = query.eq(leagueColumn, state.leagueValue);
+      filters.push({ column: leagueColumn, value: state.leagueValue });
     }
 
     if (viewConfig.plannedColumn !== undefined) {
-      query = query.eq(viewConfig.plannedColumn, viewConfig.plannedValue ?? false);
+      filters.push({ column: viewConfig.plannedColumn, value: viewConfig.plannedValue ?? false });
     }
 
-    return query;
+    return restSelect(viewConfig.name, { filters });
   };
 
   const primaryColumn = viewConfig.leagueColumn;
@@ -292,12 +307,11 @@ function renderGames() {
     byRound.get(round).push(row);
   });
 
-  const roundNames = [...byRound.keys()].sort(compareRoundLabel);
+  const roundNames = [...byRound.keys()].sort(compareRoundLabelDesc);
   els.gamesAccordion.innerHTML = roundNames
     .map((roundName, idx) => {
       const roundRows = byRound.get(roundName) || [];
-      const tableRows = roundRows
-        .map((row) => {
+      const matchRows = roundRows.map((row, rowIndex) => {
           const teamAName = String(row.team_a || row[view.homeTeamColumn] || "-");
           const teamBName = String(row.team_b || row[view.awayTeamColumn] || "-");
           const winner = String(row.winner || "").trim().toLowerCase();
@@ -314,28 +328,47 @@ function renderGames() {
             scoresNormalized.includes("pending");
           const scores = scoresRaw || "Pending";
           const comments = String(row.comments || "").trim();
-          const commentCell = comments
-            ? `<details class="comment-pop"><summary aria-label="View comment">&#128172;</summary><div class="comment-popover">${escapeHtml(comments)}</div></details>`
-            : "";
+          const commentText = comments ? escapeHtml(comments) : "-";
 
-          const rowId = createPendingRowId(roundName, row, roundRows.indexOf(row));
+          const rowId = createPendingRowId(roundName, row, rowIndex);
           state.pendingRowsById[rowId] = row;
           const scoreCell = isPending
-            ? `Pending <button type="button" class="ghost pending-submit-btn" data-row-id="${escapeHtml(rowId)}">Submit Scores</button>`
+            ? `<button type="button" class="pending-submit-btn" data-row-id="${escapeHtml(rowId)}">Submit Scores</button>`
             : escapeHtml(scores);
 
+          return {
+            teamA,
+            teamB,
+            scoreCell,
+            commentText
+          };
+        });
+
+      const tableRows = matchRows
+        .map((row) => {
+
           return `<tr>
-            <td>${teamA}</td>
-            <td>${teamB}</td>
-            <td>${scoreCell}</td>
-            <td>${commentCell}</td>
+            <td>${row.teamA}</td>
+            <td>${row.teamB}</td>
+            <td>${row.scoreCell}</td>
+            <td>${row.commentText}</td>
           </tr>`;
+        })
+        .join("");
+
+      const cardRows = matchRows
+        .map((row) => {
+          return `<article class="game-card">
+            <div class="game-card-match">${row.teamA} <span>vs</span> ${row.teamB}</div>
+            <div class="game-card-meta"><strong>Score</strong><div>${row.scoreCell}</div></div>
+            <div class="game-card-meta"><strong>Comment</strong><div>${row.commentText}</div></div>
+          </article>`;
         })
         .join("");
 
       return `<details class="round-group" ${idx === 0 ? "open" : ""}>
         <summary>${escapeHtml(roundName)}</summary>
-        <div class="round-content table-wrap">
+        <div class="round-content games-table-wrap table-wrap">
               <table class="data-table games-table">
             <thead>
               <tr>
@@ -348,6 +381,7 @@ function renderGames() {
             <tbody>${tableRows}</tbody>
           </table>
         </div>
+        <div class="round-content games-cards">${cardRows}</div>
       </details>`;
     })
     .join("");
@@ -387,11 +421,27 @@ function openSubmitModal(rowId, row) {
   const teamB = String(row.team_b || "").trim();
   els.submitTeamA.value = teamA;
   els.submitTeamB.value = teamB;
+  if (els.submitMatchup) {
+    els.submitMatchup.textContent = `${teamA} vs ${teamB}`;
+  }
   els.submitDate.value = todayISO();
+  if (els.submitScoresHint) {
+    els.submitScoresHint.textContent = "Enter each game as 11-3 or 11/3. First 3 games are required.";
+  }
   els.submitWinningTeam.innerHTML =
     '<option value="">Select winner</option>' +
     `<option value="${escapeHtmlAttr(teamA)}">${escapeHtml(teamA)}</option>` +
     `<option value="${escapeHtmlAttr(teamB)}">${escapeHtml(teamB)}</option>`;
+
+  const existingGames = String(row.scores || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  els.submitGameInputs.forEach((input, index) => {
+    input.value = existingGames[index] ? existingGames[index].replace(/[/:]/g, "-") : "";
+  });
+  onScoreInputChanged();
 
   setSubmitStep("form");
   els.submitModal.classList.remove("hidden");
@@ -424,18 +474,44 @@ function goToConfirmStep() {
     return;
   }
 
+  const parsedScores = parseScoreInputs();
+  if (!parsedScores.ok) {
+    els.submitModalError.textContent = parsedScores.message;
+    return;
+  }
+
+  const derivedWinner = deriveWinnerFromScores(parsedScores.games);
+  if (!derivedWinner) {
+    els.submitModalError.textContent = "Scores must show a winner with 3 game wins (best of 5).";
+    return;
+  }
+
+  const selectedWinner = els.submitWinningTeam.value.trim();
+  if (!selectedWinner) {
+    els.submitModalError.textContent = "Select the winning team.";
+    return;
+  }
+
+  if (selectedWinner !== derivedWinner) {
+    els.submitModalError.textContent = "Winning Team must match the team that won 3 games.";
+    return;
+  }
+
+  const winningTeam = derivedWinner;
+
   const draft = {
     passcode: state.passcode,
     teamA: els.submitTeamA.value.trim(),
     teamB: els.submitTeamB.value.trim(),
-    scores: els.submitScores.value.trim(),
-    winningTeam: els.submitWinningTeam.value.trim(),
+    scores: parsedScores.normalized,
+    winningTeam,
     date: els.submitDate.value,
     email: els.submitEmail.value.trim(),
     comments: els.submitComments.value.trim(),
+    round: String(row.round || "").trim(),
     formid: state.leagueValue,
     formname: row.league || state.leagueName || "",
-    submittedat: new Date().toISOString(),
+    submittedat: formatSubmittedAtUtc(),
     responseid: "GHForm"
   };
 
@@ -453,13 +529,134 @@ function renderSubmitConfirmation(draft) {
       <div>Winning Team</div><div>${escapeHtml(draft.winningTeam)}</div>
       <div>Date</div><div>${escapeHtml(draft.date)}</div>
       <div>Your Email</div><div>${escapeHtml(draft.email)}</div>
+      <div>Round</div><div>${escapeHtml(draft.round || "-")}</div>
       <div>Comments</div><div>${escapeHtml(draft.comments || "-")}</div>
     </div>
   `;
 }
 
+function onScoreInputChanged() {
+  const parsed = parseScoreInputs({ allowEmpty: true });
+  if (els.submitScoresHint) {
+    els.submitScoresHint.textContent = parsed.ok
+      ? "Enter each game as 11-3 or 11/3. First 3 games are required."
+      : parsed.message;
+  }
+
+  if (!parsed.ok || !parsed.games.length) {
+    els.submitWinningTeam.value = "";
+    return;
+  }
+
+  const autoWinner = deriveWinnerFromScores(parsed.games);
+  if (autoWinner) {
+    els.submitWinningTeam.value = autoWinner;
+  } else {
+    els.submitWinningTeam.value = "";
+  }
+}
+
+function parseScoreInputs({ allowEmpty = false } = {}) {
+  const games = [];
+  const inputs = Array.from(els.submitGameInputs || []);
+  const requiredInputCount = Math.min(3, inputs.length);
+  let seenScore = false;
+  let seenGap = false;
+
+  for (let i = 0; i < inputs.length; i += 1) {
+    const raw = String(inputs[i].value || "").trim();
+
+    if (raw) {
+      seenScore = true;
+      if (seenGap) {
+        return {
+          ok: false,
+          message: `Fill game scores in order. Game ${i + 1} cannot be entered before earlier empty games.`
+        };
+      }
+    } else if (seenScore) {
+      seenGap = true;
+    }
+
+    if (!raw) {
+      continue;
+    }
+
+    const normalizedRaw = raw.replace(/[/:]/g, "-").replace(/\s+/g, "");
+    const match = normalizedRaw.match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!match) {
+      return {
+        ok: false,
+        message: `Game ${i + 1} must look like 11-3 or 11/3.`
+      };
+    }
+
+    const a = Number(match[1]);
+    const b = Number(match[2]);
+    if (Number.isNaN(a) || Number.isNaN(b) || a < 0 || b < 0) {
+      return {
+        ok: false,
+        message: `Game ${i + 1} has an invalid score.`
+      };
+    }
+
+    if (a === b) {
+      return {
+        ok: false,
+        message: `Game ${i + 1} cannot end in a tie.`
+      };
+    }
+
+    games.push({ a, b, normalized: `${a}-${b}` });
+  }
+
+  if (!games.length && !allowEmpty) {
+    return {
+      ok: false,
+      message: "Enter scores for at least 3 games."
+    };
+  }
+
+  if (!allowEmpty && games.length < requiredInputCount) {
+    return {
+      ok: false,
+      message: "Enter scores for at least the first 3 games."
+    };
+  }
+
+  return {
+    ok: true,
+    games,
+    normalized: games.map((g) => g.normalized).join(",")
+  };
+}
+
+function deriveWinnerFromScores(games) {
+  let teamAWins = 0;
+  let teamBWins = 0;
+
+  games.forEach((game) => {
+    if (game.a > game.b) {
+      teamAWins += 1;
+    } else if (game.b > game.a) {
+      teamBWins += 1;
+    }
+  });
+
+  if (teamAWins === 3 && teamBWins <= 2) {
+    return els.submitTeamA.value.trim();
+  }
+
+  if (teamBWins === 3 && teamAWins <= 2) {
+    return els.submitTeamB.value.trim();
+  }
+
+  return "";
+}
+
 async function onSubmitPendingResult() {
   const draft = state.pendingDraft;
+  const sourceRow = state.pendingRowsById[state.pendingRowId] || null;
   if (!draft) {
     els.submitModalError.textContent = "No pending submission found.";
     return;
@@ -469,7 +666,10 @@ async function onSubmitPendingResult() {
   els.confirmSubmitBtn.disabled = true;
   els.confirmSubmitBtn.textContent = "Submitting...";
 
+  const ipDetails = await collectSubmissionClientDetails();
+
   const payload = {
+    id: generateUuid(),
     passcode: draft.passcode,
     "Team A": draft.teamA,
     "Team B": draft.teamB,
@@ -478,13 +678,17 @@ async function onSubmitPendingResult() {
     date: draft.date,
     "Your Email": draft.email,
     comments: draft.comments || null,
+    round: draft.round || null,
     formid: String(draft.formid || ""),
     formname: draft.formname,
+    is_planned: false,
     responseid: "GHForm",
-    submittedat: draft.submittedat
+    submittedat: draft.submittedat,
+    ipdetails: JSON.stringify(ipDetails)
   };
 
-  const { error } = await supabase.from("matches_staging").insert(payload);
+  const insertResult = await restInsert("matches_staging", payload);
+  const error = insertResult.error;
 
   if (error) {
     els.submitModalError.textContent = `Submission failed: ${error.message}`;
@@ -493,8 +697,80 @@ async function onSubmitPendingResult() {
     return;
   }
 
+  applySubmittedResultToGames(sourceRow, draft);
   closeSubmitModal();
-  await loadLeagueData();
+  renderAll();
+
+  // Refresh from backend shortly after submit in case source views update asynchronously.
+  setTimeout(() => {
+    loadLeagueData().catch(() => {});
+  }, 1200);
+}
+
+async function collectSubmissionClientDetails() {
+  const now = new Date();
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+  const details = {
+    submittedAtUtc: now.toISOString(),
+    submittedAtLocal: now.toString(),
+    timezone,
+    userAgent: navigator.userAgent || "unknown",
+    language: navigator.language || "unknown",
+    platform: navigator.platform || "unknown",
+    referrer: document.referrer || "",
+    page: window.location.href,
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+    screen: `${window.screen?.width || 0}x${window.screen?.height || 0}`,
+    ip: null,
+    ipSource: null
+  };
+
+  const ipServices = [
+    { name: "ipify", url: "https://api64.ipify.org?format=json" },
+    { name: "ipapi", url: "https://ipapi.co/json/" }
+  ];
+
+  for (const service of ipServices) {
+    try {
+      const response = await fetch(service.url, { cache: "no-store" });
+      if (!response.ok) continue;
+      const body = await response.json();
+      const ip = String(body.ip || "").trim();
+      if (!ip) continue;
+      details.ip = ip;
+      details.ipSource = service.name;
+      break;
+    } catch {
+      // Continue to the next lookup provider.
+    }
+  }
+
+  return details;
+}
+
+function applySubmittedResultToGames(sourceRow, draft) {
+  if (!sourceRow) return;
+
+  const targetTeamA = String(sourceRow.team_a || "").trim().toLowerCase();
+  const targetTeamB = String(sourceRow.team_b || "").trim().toLowerCase();
+  const targetRound = String(sourceRow.round || "").trim().toLowerCase();
+
+  state.games = state.games.map((row) => {
+    const teamA = String(row.team_a || "").trim().toLowerCase();
+    const teamB = String(row.team_b || "").trim().toLowerCase();
+    const round = String(row.round || "").trim().toLowerCase();
+
+    if (teamA === targetTeamA && teamB === targetTeamB && round === targetRound) {
+      return {
+        ...row,
+        scores: draft.scores,
+        winner: draft.winningTeam,
+        comments: draft.comments || row.comments,
+        date: draft.date || row.date
+      };
+    }
+    return row;
+  });
 }
 
 function todayISO() {
@@ -503,8 +779,112 @@ function todayISO() {
   return new Date(now.getTime() - tzOffset).toISOString().slice(0, 10);
 }
 
+function formatSubmittedAtUtc() {
+  const now = new Date();
+  const utcNoMillis = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    now.getUTCHours(),
+    now.getUTCMinutes(),
+    now.getUTCSeconds(),
+    0
+  ));
+  return utcNoMillis.toISOString();
+}
+
+async function restSelect(table, { filters = [], maybeSingle = false } = {}) {
+  try {
+    const url = new URL(`${config.supabaseUrl}/rest/v1/${encodeURIComponent(table)}`);
+    url.searchParams.set("select", "*");
+
+    filters.forEach((filter) => {
+      const value = formatFilterValue(filter.value);
+      url.searchParams.set(filter.column, `eq.${value}`);
+    });
+
+    const headers = {
+      apikey: config.supabaseAnonKey,
+      Authorization: `Bearer ${config.supabaseAnonKey}`
+    };
+
+    if (maybeSingle) {
+      headers.Accept = "application/vnd.pgrst.object+json";
+    }
+
+    const response = await fetch(url.toString(), { headers });
+
+    if (!response.ok) {
+      const body = await safeJson(response);
+      if (maybeSingle && response.status === 406) {
+        return { data: null, error: null };
+      }
+      return {
+        data: null,
+        error: { message: body?.message || `HTTP ${response.status}` }
+      };
+    }
+
+    const data = await safeJson(response);
+    return { data, error: null };
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: error?.message || "Network request failed" }
+    };
+  }
+}
+
+async function restInsert(table, row) {
+  const url = `${config.supabaseUrl}/rest/v1/${encodeURIComponent(table)}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: `Bearer ${config.supabaseAnonKey}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify(row)
+  });
+
+  if (!response.ok) {
+    const body = await safeJson(response);
+    return { error: { message: body?.message || `HTTP ${response.status}` } };
+  }
+
+  return { error: null };
+}
+
+function formatFilterValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+}
+
+async function safeJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function generateUuid() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function renderLeaderboard() {
   const view = config.views.leaderboard;
+  const scoreView = config.views.scores;
   const rows = state.leaderboard
     .filter((row) => teamMatch([row[view.teamColumn]]))
     .sort((a, b) => {
@@ -515,50 +895,373 @@ function renderLeaderboard() {
       return String(a[view.teamColumn] || "").localeCompare(String(b[view.teamColumn] || ""));
     });
 
+  const gamesPlayedByTeam = new Map();
+  const detailRowsByTeam = new Map();
+  state.scores.forEach((row) => {
+    const team = String(row[scoreView.teamColumn] || "").trim();
+    if (!team) return;
+
+    if (!teamMatch([team, row[scoreView.opponentColumn]])) {
+      return;
+    }
+
+    gamesPlayedByTeam.set(team, Number(gamesPlayedByTeam.get(team) || 0) + 1);
+
+    if (!detailRowsByTeam.has(team)) {
+      detailRowsByTeam.set(team, []);
+    }
+    const winValue = Number(row[scoreView.winsColumn] ?? row[scoreView.winnerFlagColumn] ?? 0);
+    const isTeamWinner = winValue > 0;
+    const opponent = String(row[scoreView.opponentColumn] || "-").trim();
+    const opponentWithIcon = !isTeamWinner && opponent !== "-"
+      ? `${escapeHtml(opponent)} <span class="winner-inline-icon" aria-label="Winner">&#127942;</span>`
+      : escapeHtml(opponent);
+
+    detailRowsByTeam.get(team).push({
+      round: String(row[scoreView.roundColumn] || "Round").trim(),
+      opponent,
+      opponentHtml: opponentWithIcon,
+      points: Number(row[scoreView.pointsColumn] ?? 0)
+    });
+  });
+
+  detailRowsByTeam.forEach((entries) => {
+    entries.sort((a, b) => compareRoundLabel(a.round, b.round));
+  });
+
+  const orderedTeams = rows.map((row) => String(row[view.teamColumn] || ""));
+  const rankChart = renderCumulativePointsChart(orderedTeams);
+  const ribbonChart = renderCumulativeRibbonChart(orderedTeams);
+
   els.leaderboardTable.innerHTML = rows.length
-      ? `<table class="data-table leaderboard-table">
-        <thead>
-          <tr><th>Rank</th><th>Team</th><th>Wins</th><th>Points</th></tr>
-        </thead>
-        <tbody>
+      ? `<div class="leaderboard-cards">
           ${rows
             .map((row, index) => {
               const rank = index + 1;
-              const team = row[view.teamColumn] || "Team";
-              const wins = row[view.winsColumn] ?? 0;
-              const points = row[view.pointsColumn] ?? 0;
-              return `<tr><td>${escapeHtml(String(rank))}</td><td>${escapeHtml(team)}</td><td>${escapeHtml(String(wins))}</td><td>${escapeHtml(String(points))}</td></tr>`;
+              const team = String(row[view.teamColumn] || "Team");
+              const wins = Number(row[view.winsColumn] ?? 0);
+              const gamesPlayed = Number(gamesPlayedByTeam.get(team) || 0);
+              const points = Number(row[view.pointsColumn] ?? 0);
+              const pointsClass = points > 0 ? "points-positive" : points < 0 ? "points-negative" : "";
+              const detailRows = detailRowsByTeam.get(team) || [];
+              const detailMarkup = detailRows.length
+                ? `<details class="leaderboard-expand">
+                    <summary>Round Details</summary>
+                    <div class="leaderboard-expand-body">
+                      ${detailRows
+                        .map((entry) => {
+                          const pointClass = entry.points > 0 ? "points-positive" : "points-negative";
+                          return `<div class="leaderboard-round-row">
+                            <span>${escapeHtml(entry.round)}</span>
+                            <span>${entry.opponentHtml || escapeHtml(entry.opponent || "-")}</span>
+                            <span class="${pointClass}">${escapeHtml(formatNumber(entry.points, "points"))}</span>
+                          </div>`;
+                        })
+                        .join("")}
+                    </div>
+                  </details>`
+                : "<p class=\"muted\">No round details available.</p>";
+
+              return `<article class="leaderboard-card">
+                <div class="leaderboard-card-head">
+                  <span class="leaderboard-rank">#${escapeHtml(String(rank))}</span>
+                  <strong>${escapeHtml(team)}</strong>
+                </div>
+                <div class="leaderboard-card-metrics">
+                  <span><strong>Wins:</strong> ${escapeHtml(String(wins))} of ${escapeHtml(String(gamesPlayed))}</span>
+                  <span><strong>Points:</strong> <span class="${pointsClass}">${escapeHtml(formatNumber(points, "points"))}</span></span>
+                </div>
+                ${detailMarkup}
+              </article>`;
             })
             .join("")}
-        </tbody>
-      </table>`
+        </div>
+        ${rankChart}
+        ${ribbonChart}`
     : "<p class=\"muted\">No leaderboard data for this filter.</p>";
 }
 
-function renderLeaderboardDetail() {
-  const metric = state.detailMetric;
-  const rows = buildLeaderboardRoundMatrix(metric);
-  if (!rows.columns.length || !rows.data.length) {
-    els.leaderboardDetailTable.innerHTML = "<p class=\"muted\">No round detail available for this filter.</p>";
-    return;
+function renderCumulativePointsChart(orderedTeams) {
+  const scoreView = config.views.scores;
+  const filtered = state.scores.filter((row) =>
+    teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
+  );
+
+  const roundSet = new Set();
+  filtered.forEach((row) => {
+    const round = String(row[scoreView.roundColumn] || "Round").trim();
+    roundSet.add(round);
+  });
+
+  const rounds = [...roundSet].sort(compareRoundLabel);
+  if (!rounds.length || !orderedTeams.length) {
+    return "";
   }
 
-  const colHeaders = rows.columns.map((col) => `<th>${escapeHtml(col)}</th>`).join("");
-  const body = rows.data
-    .map((row) => {
-      const values = rows.columns
-        .map((col) => `<td>${escapeHtml(formatNumber(row.values[col] ?? 0, metric))}</td>`)
-        .join("");
-      return `<tr><td>${escapeHtml(row.team)}</td>${values}<td>${escapeHtml(formatNumber(row.total, metric))}</td></tr>`;
+  const pointsByTeamRound = new Map();
+  const teamSet = new Set(orderedTeams.filter(Boolean));
+  filtered.forEach((row) => {
+    const team = String(row[scoreView.teamColumn] || "").trim();
+    if (!team || !teamSet.has(team)) return;
+
+    const round = String(row[scoreView.roundColumn] || "Round").trim();
+    const key = `${team}::${round}`;
+    pointsByTeamRound.set(key, Number(pointsByTeamRound.get(key) || 0) + Number(row[scoreView.pointsColumn] ?? 0));
+  });
+
+  const teams = orderedTeams.filter(Boolean);
+  const cumulativeByTeam = new Map(teams.map((team) => [team, 0]));
+  const rankByTeam = new Map(teams.map((team) => [team, []]));
+
+  rounds.forEach((round) => {
+    teams.forEach((team) => {
+      const key = `${team}::${round}`;
+      const updated = Number(cumulativeByTeam.get(team) || 0) + Number(pointsByTeamRound.get(key) || 0);
+      cumulativeByTeam.set(team, updated);
+    });
+
+    const ranked = [...teams].sort((teamA, teamB) => {
+      const diff = Number(cumulativeByTeam.get(teamB) || 0) - Number(cumulativeByTeam.get(teamA) || 0);
+      if (diff !== 0) return diff;
+      return teamA.localeCompare(teamB);
+    });
+
+    ranked.forEach((team, idx) => {
+      rankByTeam.get(team).push(idx + 1);
+    });
+  });
+
+  const teamSeries = teams.map((team) => ({ team, values: rankByTeam.get(team) || [] }));
+  const maxRank = Math.max(1, teamSeries.length);
+
+  const width = 780;
+  const height = 320;
+  const padLeft = 48;
+  const padRight = 110;
+  const padTop = 18;
+  const padBottom = 44;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+
+  const stepCount = Math.max(1, rounds.length - 1);
+  const preferredStep = 92;
+  const compactPlotWidth = Math.min(plotWidth, Math.max(170, stepCount * preferredStep));
+  const xOffset = (plotWidth - compactPlotWidth) / 2;
+
+  const xFor = (idx) => {
+    if (rounds.length <= 1) {
+      return padLeft + xOffset + compactPlotWidth / 2;
+    }
+    return padLeft + xOffset + (idx / (rounds.length - 1)) * compactPlotWidth;
+  };
+
+  const yFor = (rank) => {
+    if (maxRank <= 1) {
+      return padTop + plotHeight / 2;
+    }
+    return padTop + ((rank - 1) / (maxRank - 1)) * plotHeight;
+  };
+
+  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2"];
+  const highlightedTeams = new Set(teams.slice(0, 3));
+
+  const yTickLines = Array.from({ length: maxRank }, (_, idx) => {
+    const rank = idx + 1;
+    const y = yFor(rank);
+    return `
+      <line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" class="chart-grid" />
+      <text x="${padLeft - 8}" y="${y + 4}" class="chart-axis-label" text-anchor="end">${escapeHtml(String(rank))}</text>
+    `;
+  }).join("");
+
+  const xLabels = rounds
+    .map((round, idx) => {
+      const x = xFor(idx);
+      return `<text x="${x}" y="${height - 18}" class="chart-axis-label" text-anchor="middle">${escapeHtml(round)}</text>`;
     })
     .join("");
 
-  els.leaderboardDetailTable.innerHTML = `<table class="data-table leaderboard-detail-table">
-    <thead>
-      <tr><th>Team</th>${colHeaders}<th>Grand Total</th></tr>
-    </thead>
-    <tbody>${body}</tbody>
-  </table>`;
+  const seriesLines = teamSeries
+    .map((series, idx) => {
+      const isHighlighted = highlightedTeams.has(series.team);
+      const color = isHighlighted ? linePalette[idx % linePalette.length] : "rgba(20, 19, 17, 0.25)";
+      const strokeWidth = isHighlighted ? 2.4 : 1.5;
+      const points = series.values
+        .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
+        .join(" ");
+
+      const pointDots = series.values
+        .map((value, valueIdx) => `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${isHighlighted ? 2.8 : 2.2}" fill="${color}" />`)
+        .join("");
+
+      const lastRank = series.values.at(-1);
+      const endLabel = lastRank
+        ? `<text x="${xFor(rounds.length - 1) + 8}" y="${yFor(lastRank) + 4}" class="chart-end-label">${escapeHtml(series.team)}</text>`
+        : "";
+
+      return `
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" />
+        ${pointDots}
+        ${endLabel}
+      `;
+    })
+    .join("");
+
+  return `
+    <section class="leaderboard-chart">
+      <h4>Rank Movement by Round</h4>
+      <p class="muted">Lower rank is better. Top 3 teams are highlighted.</p>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Rank over round bump chart by team">
+          <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" class="chart-axis" />
+          <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" class="chart-axis" />
+          ${yTickLines}
+          ${xLabels}
+          ${seriesLines}
+        </svg>
+      </div>
+    </section>
+  `;
+}
+
+function renderCumulativeRibbonChart(orderedTeams) {
+  const scoreView = config.views.scores;
+  const filtered = state.scores.filter((row) =>
+    teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
+  );
+
+  const roundSet = new Set();
+  filtered.forEach((row) => {
+    const round = String(row[scoreView.roundColumn] || "Round").trim();
+    roundSet.add(round);
+  });
+
+  const rounds = [...roundSet].sort(compareRoundLabel);
+  if (!rounds.length || !orderedTeams.length) {
+    return "";
+  }
+
+  const teamSet = new Set(orderedTeams.filter(Boolean));
+  const pointsByTeamRound = new Map();
+  filtered.forEach((row) => {
+    const team = String(row[scoreView.teamColumn] || "").trim();
+    if (!team || !teamSet.has(team)) return;
+
+    const round = String(row[scoreView.roundColumn] || "Round").trim();
+    const key = `${team}::${round}`;
+    pointsByTeamRound.set(key, Number(pointsByTeamRound.get(key) || 0) + Number(row[scoreView.pointsColumn] ?? 0));
+  });
+
+  const teams = orderedTeams.filter(Boolean);
+  const teamSeries = teams.map((team) => {
+    let cumulative = 0;
+    const values = rounds.map((round) => {
+      const key = `${team}::${round}`;
+      cumulative += Number(pointsByTeamRound.get(key) || 0);
+      return cumulative;
+    });
+    return { team, values };
+  });
+
+  const allValues = teamSeries.flatMap((series) => series.values);
+  const minValue = Math.min(0, ...allValues);
+  const maxValue = Math.max(0, ...allValues);
+
+  const width = 780;
+  const height = 320;
+  const padLeft = 48;
+  const padRight = 120;
+  const padTop = 18;
+  const padBottom = 44;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+
+  const stepCount = Math.max(1, rounds.length - 1);
+  const preferredStep = 92;
+  const compactPlotWidth = Math.min(plotWidth, Math.max(170, stepCount * preferredStep));
+  const xOffset = (plotWidth - compactPlotWidth) / 2;
+
+  const xFor = (idx) => {
+    if (rounds.length <= 1) {
+      return padLeft + xOffset + compactPlotWidth / 2;
+    }
+    return padLeft + xOffset + (idx / (rounds.length - 1)) * compactPlotWidth;
+  };
+
+  const yFor = (value) => {
+    if (maxValue === minValue) {
+      return padTop + plotHeight / 2;
+    }
+    return padTop + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
+  };
+
+  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
+
+  const topTeams = [...teamSeries]
+    .sort((a, b) => Number(b.values.at(-1) || 0) - Number(a.values.at(-1) || 0))
+    .slice(0, 4)
+    .map((series) => series.team);
+  const topTeamSet = new Set(topTeams);
+
+  const yTicks = 5;
+  const yTickLines = Array.from({ length: yTicks }, (_, idx) => {
+    const value = minValue + ((maxValue - minValue) * idx) / (yTicks - 1 || 1);
+    const y = yFor(value);
+    return `
+      <line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" class="chart-grid" />
+      <text x="${padLeft - 8}" y="${y + 4}" class="chart-axis-label" text-anchor="end">${escapeHtml(formatNumber(value, "points"))}</text>
+    `;
+  }).join("");
+
+  const xLabels = rounds
+    .map((round, idx) => {
+      const x = xFor(idx);
+      return `<text x="${x}" y="${height - 18}" class="chart-axis-label" text-anchor="middle">${escapeHtml(round)}</text>`;
+    })
+    .join("");
+
+  const ribbons = teamSeries
+    .map((series, idx) => {
+      const color = linePalette[idx % linePalette.length];
+      const isTop = topTeamSet.has(series.team);
+      const linePoints = series.values
+        .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
+        .join(" ");
+
+      const endValue = series.values.at(-1);
+      const endLabel = typeof endValue === "number"
+        ? `<text x="${xFor(rounds.length - 1) + 8}" y="${yFor(endValue) + 4}" class="chart-end-label ${isTop ? "chart-end-label-strong" : ""}">${escapeHtml(series.team)}</text>`
+        : "";
+
+      return `
+        <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${isTop ? "0.9" : "0.45"}" stroke-width="${isTop ? "2.2" : "1.4"}" />
+        ${endLabel}
+      `;
+    })
+    .join("");
+
+  return `
+    <section class="leaderboard-chart leaderboard-chart-ribbon">
+      <h4>Cumulative Points Movement (Ribbon)</h4>
+      <p class="muted">Higher is better. Top 4 teams are emphasized.</p>
+      <div class="chart-wrap">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Cumulative points movement by round ribbon chart">
+          <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" class="chart-axis" />
+          <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" class="chart-axis" />
+          ${yTickLines}
+          ${xLabels}
+          ${ribbons}
+        </svg>
+      </div>
+    </section>
+  `;
+}
+
+function renderLeaderboardDetail() {
+  if (!els.leaderboardDetailTable) {
+    return;
+  }
+  els.leaderboardDetailTable.innerHTML = "";
 }
 
 function buildLeaderboardRoundMatrix(metric) {
@@ -603,6 +1306,10 @@ function compareRoundLabel(a, b) {
   const numB = Number(String(b).match(/\d+/)?.[0] || 999999);
   if (numA !== numB) return numA - numB;
   return String(a).localeCompare(String(b));
+}
+
+function compareRoundLabelDesc(a, b) {
+  return compareRoundLabel(b, a);
 }
 
 function formatNumber(value, metric) {
