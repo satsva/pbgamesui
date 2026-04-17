@@ -1,5 +1,19 @@
 const config = window.APP_CONFIG;
 const PORTAL_ACCESS_LOG_TABLE = "portal_access_log";
+const CHART_LINE_PALETTE = [
+  "#0a9d75",
+  "#ef6c00",
+  "#1976d2",
+  "#6a1b9a",
+  "#2e7d32",
+  "#c62828",
+  "#00838f",
+  "#5d4037",
+  "#ad1457",
+  "#1565c0",
+  "#9e9d24",
+  "#283593"
+];
 
 const state = {
   leagueValue: null,
@@ -85,6 +99,26 @@ function wireEvents() {
         return;
       }
       state.highlightTeam = target.value;
+      renderLeaderboard();
+    });
+
+    els.panelLeaderboard.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const clickable = target.closest("[data-team-select]");
+      if (!clickable) {
+        return;
+      }
+
+      const team = String(clickable.getAttribute("data-team-select") || "").trim();
+      if (!team) {
+        return;
+      }
+
+      state.highlightTeam = state.highlightTeam === team ? "" : team;
       renderLeaderboard();
     });
   }
@@ -973,9 +1007,10 @@ function renderLeaderboard() {
   if (state.highlightTeam && !orderedTeamSet.has(state.highlightTeam)) {
     state.highlightTeam = "";
   }
+  const teamColorMap = buildTeamColorMap(orderedTeams);
   const highlightControl = renderChartHighlightControl(orderedTeams, state.highlightTeam);
-  const rankChart = renderCumulativePointsChart(orderedTeams, state.highlightTeam);
-  const ribbonChart = renderCumulativeRibbonChart(orderedTeams, state.highlightTeam);
+  const rankChart = renderCumulativePointsChart(orderedTeams, state.highlightTeam, teamColorMap);
+  const ribbonChart = renderCumulativeRibbonChart(orderedTeams, state.highlightTeam, teamColorMap);
 
   els.leaderboardTable.innerHTML = rows.length
       ? `<div class="leaderboard-cards">
@@ -1052,7 +1087,19 @@ function renderChartHighlightControl(teams, selectedTeam) {
   `;
 }
 
-function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
+function buildTeamColorMap(teams) {
+  const teamColorMap = new Map();
+  teams
+    .filter(Boolean)
+    .forEach((team) => {
+      if (teamColorMap.has(team)) return;
+      const nextIdx = teamColorMap.size;
+      teamColorMap.set(team, CHART_LINE_PALETTE[nextIdx % CHART_LINE_PALETTE.length]);
+    });
+  return teamColorMap;
+}
+
+function renderCumulativePointsChart(orderedTeams, highlightTeam = "", teamColorMap = new Map()) {
   const scoreView = config.views.scores;
   const filtered = state.scores.filter((row) =>
     teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
@@ -1144,7 +1191,6 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
     return padTop + ((rank - 1) / (maxRank - 1)) * plotHeight;
   };
 
-  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
   const activeHighlight = String(highlightTeam || "").trim();
   const dimColor = "#a2acb7";
   const highlightColor = "#0a9d75";
@@ -1174,7 +1220,7 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
       const isHighlighted = activeHighlight && series.team === activeHighlight;
       const color = activeHighlight
         ? (isHighlighted ? highlightColor : dimColor)
-        : linePalette[idx % linePalette.length];
+        : (teamColorMap.get(series.team) || CHART_LINE_PALETTE[idx % CHART_LINE_PALETTE.length]);
       const strokeWidth = activeHighlight ? (isHighlighted ? 2.8 : 1.8) : 2;
       const strokeOpacity = activeHighlight ? (isHighlighted ? "0.98" : "0.72") : "1";
       const points = series.values
@@ -1186,18 +1232,18 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
           const cx = xFor(valueIdx);
           const cy = yFor(value);
           const rankTextClass = activeHighlight && !isHighlighted ? "chart-point-rank chart-point-rank-muted" : "chart-point-rank";
-          return `<circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" />
+          return `<circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" data-team-select="${escapeHtmlAttr(series.team)}" />
             <text x="${cx + rankMarkerOffsetX}" y="${cy + rankMarkerOffsetY}" class="${rankTextClass}">${escapeHtml(String(value))}</text>`;
         })
         .join("");
 
       const lastRank = series.values.at(-1);
       const endLabel = lastRank
-        ? `<text x="${xFor(rounds.length - 1) + endTeamLabelOffsetX}" y="${yFor(lastRank) + endTeamLabelOffsetY}" class="chart-end-label ${activeHighlight && !isHighlighted ? "chart-end-label-muted" : ""}">${escapeHtml(series.team)}</text>`
+        ? `<text x="${xFor(rounds.length - 1) + endTeamLabelOffsetX}" y="${yFor(lastRank) + endTeamLabelOffsetY}" class="chart-end-label ${activeHighlight && !isHighlighted ? "chart-end-label-muted" : ""}" data-team-select="${escapeHtmlAttr(series.team)}">${escapeHtml(series.team)}</text>`
         : "";
 
       return `
-        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" />
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" data-team-select="${escapeHtmlAttr(series.team)}" />
         ${pointDots}
         ${endLabel}
       `;
@@ -1221,7 +1267,7 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
   `;
 }
 
-function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
+function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "", teamColorMap = new Map()) {
   const scoreView = config.views.scores;
   const filtered = state.scores.filter((row) =>
     teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
@@ -1292,7 +1338,6 @@ function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
     return padTop + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
   };
 
-  const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
   const activeHighlight = String(highlightTeam || "").trim();
   const dimColor = "#a2acb7";
   const highlightColor = "#0a9d75";
@@ -1325,7 +1370,7 @@ function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
       const isHighlighted = activeHighlight && series.team === activeHighlight;
       const color = activeHighlight
         ? (isHighlighted ? highlightColor : dimColor)
-        : linePalette[idx % linePalette.length];
+        : (teamColorMap.get(series.team) || CHART_LINE_PALETTE[idx % CHART_LINE_PALETTE.length]);
       const isTop = topTeamSet.has(series.team);
       const linePoints = series.values
         .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
@@ -1334,7 +1379,7 @@ function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
         .map((value, valueIdx) => {
           const dotRadius = activeHighlight ? (isHighlighted ? "2.8" : "2") : (isTop ? "2.6" : "1.9");
           const dotOpacity = activeHighlight ? (isHighlighted ? "0.95" : "0.55") : (isTop ? "0.95" : "0.6");
-          return `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${dotRadius}" fill="${color}" fill-opacity="${dotOpacity}" />`;
+          return `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${dotRadius}" fill="${color}" fill-opacity="${dotOpacity}" data-team-select="${escapeHtmlAttr(series.team)}" />`;
         })
         .join("");
 
@@ -1355,7 +1400,7 @@ function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
 
       return {
         markup: `
-        <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${lineOpacity}" stroke-width="${lineWidth}" />
+        <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${lineOpacity}" stroke-width="${lineWidth}" data-team-select="${escapeHtmlAttr(series.team)}" />
         ${pointDots}
       `,
         endLabelEntry
@@ -1397,8 +1442,8 @@ function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
       const labelX = entry.anchorX + 10;
       const connectorX2 = labelX - 3;
       return `
-        <line x1="${entry.anchorX + 1}" y1="${entry.anchorY}" x2="${connectorX2}" y2="${entry.labelY - 3}" class="chart-label-connector" stroke="${entry.color}" />
-        <text x="${labelX}" y="${entry.labelY}" class="${entry.className}">${escapeHtml(entry.team)}</text>
+        <line x1="${entry.anchorX + 1}" y1="${entry.anchorY}" x2="${connectorX2}" y2="${entry.labelY - 3}" class="chart-label-connector" stroke="${entry.color}" data-team-select="${escapeHtmlAttr(entry.team)}" />
+        <text x="${labelX}" y="${entry.labelY}" class="${entry.className}" data-team-select="${escapeHtmlAttr(entry.team)}">${escapeHtml(entry.team)}</text>
       `;
     })
     .join("");

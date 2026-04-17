@@ -566,6 +566,10 @@ button.ghost {
   opacity: 0.55;
 }
 
+[data-team-select] {
+  cursor: pointer;
+}
+
 .chart-end-label-muted {
   fill: #8b95a1;
 }
