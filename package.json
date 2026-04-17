@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "supabase:deploy:notify": "npx supabase functions deploy notify-match-result --no-verify-jwt",
+    "supabase:deploy": "npm run supabase:deploy:notify"
+  },
+  "devDependencies": {
+    "supabase": "^2.92.0"
+  }
+}

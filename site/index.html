@@ -92,7 +92,28 @@
           </div>
 
           <div id="panelLeaderboard" class="tab-panel hidden">
-            <h3>Leaderboard</h3>
+            <div class="leaderboard-head">
+              <h3>Leaderboard</h3>
+            </div>
+            <details class="leaderboard-info-accordion">
+              <summary>How are points calculated?</summary>
+              <div class="leaderboard-info-content">
+                <p>
+                  Points are calculated by taking the differential for each game, totalled and divided by number of games so Teams which played 3 or 4 or 5 games are treated equally.
+                </p>
+                <p>
+                  For e.g., if the scores are 11/3; 12/10; 9/11; 3/11; 11/4. 
+                </p>
+                <p>
+                  Differentials will be 8+2-2-8+7. 
+                  Total = 7 (for Team A) 
+                  Points = 7/5 (no of games) = 1.4 for Team A and -1.4 for Team B.
+                </p>
+                <p>
+                  Positive number means the team won. Lower number indicates close games.
+                </p>
+              </div>
+            </details>
             <div id="leaderboardTable" class="table-wrap"></div>
           </div>
         </section>

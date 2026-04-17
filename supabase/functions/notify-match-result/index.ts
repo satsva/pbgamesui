@@ -1,0 +1,152 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { Resend } from "npm:resend@3";
+
+type WebhookPayload = {
+  type?: string;
+  table?: string;
+  schema?: string;
+  record?: Record<string, unknown> | null;
+  old_record?: Record<string, unknown> | null;
+};
+
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+const ADMIN_EMAIL = Deno.env.get("ADMIN_EMAIL") ?? "";
+const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
+const FROM_EMAIL = Deno.env.get("FROM_EMAIL") ?? "Match Bot <no-reply@example.com>";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+const resend = new Resend(RESEND_API_KEY);
+
+function asString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function getRow(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object") return {};
+  const typed = payload as WebhookPayload;
+  if (typed.record && typeof typed.record === "object") {
+    return typed.record;
+  }
+  return payload as Record<string, unknown>;
+}
+
+function parseEmailList(value: string): string[] {
+  return value
+    .split(/[;,]/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+}
+
+Deno.serve(async (req) => {
+  try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    const providedSecret = req.headers.get("x-webhook-secret") ?? "";
+    if (!WEBHOOK_SECRET || providedSecret !== WEBHOOK_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (!RESEND_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return new Response("Missing required environment variables", { status: 500 });
+    }
+
+    const payload = await req.json();
+    const row = getRow(payload);
+
+    // Matches your current insert payload field names from the frontend app.
+    const teamA = asString(row["Team A"]);
+    const teamB = asString(row["Team B"]);
+    const scores = asString(row.scores);
+    const comments = asString(row.comments);
+    const winningTeam = asString(row["Winning Team"]);
+    const datePlayed = asString(row.date);
+    const league = asString(row.formname);
+    const round = asString(row.round);
+    const submitterEmail = asString(row["Your Email"]);
+
+    if (!teamA || !teamB) {
+      return new Response("Missing team names in inserted row", { status: 400 });
+    }
+
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: players, error: playersError } = await supabaseAdmin
+      .from("team_players")
+      .select("email, team_name")
+      .in("team_name", [teamA, teamB])
+      .eq("is_active", true);
+
+    if (playersError) {
+      console.error("Failed loading recipients:", playersError);
+      return new Response("Failed to load team recipients", { status: 500 });
+    }
+
+    const teamRecipients = [
+      ...new Set((players ?? []).map((player) => asString(player.email)).filter(Boolean))
+    ];
+
+    const adminRecipients = parseEmailList(ADMIN_EMAIL);
+    const to = teamRecipients.length ? teamRecipients : adminRecipients;
+    const cc = teamRecipients.length
+      ? [...new Set([...adminRecipients, submitterEmail].filter(Boolean))]
+      : [...new Set([submitterEmail].filter(Boolean))];
+
+    if (!to.length) {
+      return new Response("No recipients configured. Set team_players and/or ADMIN_EMAIL.", {
+        status: 500
+      });
+    }
+
+    const subject = `${league || "League"}: ${teamA} vs ${teamB} - Score Submitted`;
+
+    const html = `
+      <h2>Match Result Submitted</h2>
+      <table cellpadding="6" cellspacing="0" border="1" style="border-collapse: collapse;">
+        <tr><td><strong>League</strong></td><td>${escapeHtml(league || "-")}</td></tr>
+        <tr><td><strong>Round</strong></td><td>${escapeHtml(round || "-")}</td></tr>
+        <tr><td><strong>Date Played</strong></td><td>${escapeHtml(datePlayed || "-")}</td></tr>
+        <tr><td><strong>Team A</strong></td><td>${escapeHtml(teamA)}</td></tr>
+        <tr><td><strong>Team B</strong></td><td>${escapeHtml(teamB)}</td></tr>
+        <tr><td><strong>Scores</strong></td><td>${escapeHtml(scores || "-")}</td></tr>
+        <tr><td><strong>Winning Team</strong></td><td>${escapeHtml(winningTeam || "-")}</td></tr>
+        <tr><td><strong>Comments</strong></td><td>${escapeHtml(comments || "-")}</td></tr>
+      </table>
+    `;
+
+    const { error: sendError } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to,
+      cc: cc.length ? cc : undefined,
+      subject,
+      html
+    });
+
+    if (sendError) {
+      console.error("Resend send error:", sendError);
+      return new Response("Email send failed", { status: 500 });
+    }
+
+    return new Response(JSON.stringify({ ok: true, sentTo: to.length }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  } catch (error) {
+    console.error("notify-match-result error:", error);
+    return new Response("Internal server error", { status: 500 });
+  }
+});

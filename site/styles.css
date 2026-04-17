@@ -185,6 +185,82 @@ button.ghost {
   margin-bottom: 8px;
 }
 
+.leaderboard-head {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.leaderboard-info-accordion {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.leaderboard-info-accordion > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.leaderboard-info-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.leaderboard-info-accordion > summary::after {
+  content: "Show";
+  float: right;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.leaderboard-info-accordion[open] > summary::after {
+  content: "Hide";
+}
+
+.leaderboard-info-content {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.leaderboard-info-content p {
+  margin: 0;
+}
+
+.highlight-team-filter {
+  display: grid;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.leaderboard-chart-controls {
+  margin-top: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.leaderboard-chart-controls select {
+  min-width: 240px;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -404,8 +480,22 @@ button.ghost {
   white-space: nowrap;
 }
 
-.leaderboard-card-metrics strong {
+.leaderboard-card-metrics .metric-label {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.leaderboard-card-metrics .metric-value {
   color: var(--ink);
+  font-weight: 700;
+}
+
+.leaderboard-card-metrics .metric-value.points-positive {
+  color: #166534;
+}
+
+.leaderboard-card-metrics .metric-value.points-negative {
+  color: #b91c1c;
 }
 
 .leaderboard-card-metrics .points-positive,
@@ -460,11 +550,24 @@ button.ghost {
   font-weight: 600;
 }
 
+.chart-point-rank-muted {
+  fill: #8b95a1;
+}
+
 .chart-end-label {
   fill: #2f2b27;
   font-size: 10px;
   font-weight: 500;
   font-family: "Space Grotesk", sans-serif;
+}
+
+.chart-label-connector {
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.chart-end-label-muted {
+  fill: #8b95a1;
 }
 
 .chart-end-label-strong {
@@ -517,6 +620,19 @@ button.ghost {
   display: grid;
   border-top: 1px solid var(--line);
   background: rgba(10, 157, 117, 0.04);
+}
+
+.leaderboard-round-header {
+  display: grid;
+  grid-template-columns: minmax(72px, 110px) minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  font-weight: 700;
+  background: rgba(10, 157, 117, 0.12);
 }
 
 .leaderboard-round-row {
@@ -797,12 +913,21 @@ textarea {
     font-size: 0.82rem;
   }
 
+  .leaderboard-chart-controls select {
+    min-width: 0;
+    width: 100%;
+  }
+
   .leaderboard-card-metrics span {
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
   .leaderboard-round-row {
+    grid-template-columns: minmax(62px, 92px) minmax(0, 1fr) auto;
+  }
+
+  .leaderboard-round-header {
     grid-template-columns: minmax(62px, 92px) minmax(0, 1fr) auto;
   }
 

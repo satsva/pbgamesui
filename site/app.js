@@ -6,6 +6,7 @@ const state = {
   leagueName: "",
   passcode: "",
   selectedTeam: "",
+  highlightTeam: "",
   teamSearch: "",
   activeTab: "games",
   detailMetric: "wins",
@@ -77,6 +78,16 @@ function wireEvents() {
     state.selectedTeam = event.target.value;
     renderAll();
   });
+  if (els.panelLeaderboard) {
+    els.panelLeaderboard.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLSelectElement) || target.id !== "highlightTeamSelect") {
+        return;
+      }
+      state.highlightTeam = target.value;
+      renderLeaderboard();
+    });
+  }
   els.clearFilters.addEventListener("click", () => {
     state.selectedTeam = "";
     state.teamSearch = "";
@@ -271,6 +282,7 @@ function hydrateTeamDropdown() {
     option.textContent = team;
     els.teamSelect.append(option);
   });
+
 }
 
 function addTeam(set, value) {
@@ -957,8 +969,13 @@ function renderLeaderboard() {
   });
 
   const orderedTeams = rows.map((row) => String(row[view.teamColumn] || ""));
-  const rankChart = renderCumulativePointsChart(orderedTeams);
-  const ribbonChart = renderCumulativeRibbonChart(orderedTeams);
+  const orderedTeamSet = new Set(orderedTeams.filter(Boolean));
+  if (state.highlightTeam && !orderedTeamSet.has(state.highlightTeam)) {
+    state.highlightTeam = "";
+  }
+  const highlightControl = renderChartHighlightControl(orderedTeams, state.highlightTeam);
+  const rankChart = renderCumulativePointsChart(orderedTeams, state.highlightTeam);
+  const ribbonChart = renderCumulativeRibbonChart(orderedTeams, state.highlightTeam);
 
   els.leaderboardTable.innerHTML = rows.length
       ? `<div class="leaderboard-cards">
@@ -975,6 +992,11 @@ function renderLeaderboard() {
                 ? `<details class="leaderboard-expand">
                     <summary>Round Details</summary>
                     <div class="leaderboard-expand-body">
+                      <div class="leaderboard-round-header">
+                        <span>Round</span>
+                        <span>Opponent</span>
+                        <span>Points</span>
+                      </div>
                       ${detailRows
                         .map((entry) => {
                           const pointClass = entry.points > 0 ? "points-positive" : "points-negative";
@@ -995,20 +1017,42 @@ function renderLeaderboard() {
                   <strong>${escapeHtml(team)}</strong>
                 </div>
                 <div class="leaderboard-card-metrics">
-                  <span><strong>Wins:</strong> ${escapeHtml(String(wins))} of ${escapeHtml(String(gamesPlayed))}</span>
-                  <span><strong>Points:</strong> <span class="${pointsClass}">${escapeHtml(formatNumber(points, "points"))}</span></span>
+                  <span><span class="metric-label">Wins:</span> <span class="metric-value">${escapeHtml(String(wins))}</span> <span class="metric-label">of</span> <span class="metric-value">${escapeHtml(String(gamesPlayed))}</span></span>
+                  <span><span class="metric-label">Points:</span> <span class="metric-value ${pointsClass}">${escapeHtml(formatNumber(points, "points"))}</span></span>
                 </div>
                 ${detailMarkup}
               </article>`;
             })
             .join("")}
         </div>
+        ${highlightControl}
         ${rankChart}
         ${ribbonChart}`
     : "<p class=\"muted\">No leaderboard data for this filter.</p>";
 }
 
-function renderCumulativePointsChart(orderedTeams) {
+function renderChartHighlightControl(teams, selectedTeam) {
+  const options = [
+    '<option value="">All teams</option>',
+    ...teams
+      .filter(Boolean)
+      .map((team) => {
+        const selected = selectedTeam === team ? " selected" : "";
+        return `<option value="${escapeHtmlAttr(team)}"${selected}>${escapeHtml(team)}</option>`;
+      })
+  ].join("");
+
+  return `
+    <div class="leaderboard-chart-controls">
+      <label class="highlight-team-filter" for="highlightTeamSelect">Highlight Team</label>
+      <select id="highlightTeamSelect" aria-label="Highlight team on both leaderboard charts">
+        ${options}
+      </select>
+    </div>
+  `;
+}
+
+function renderCumulativePointsChart(orderedTeams, highlightTeam = "") {
   const scoreView = config.views.scores;
   const filtered = state.scores.filter((row) =>
     teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
@@ -1101,6 +1145,9 @@ function renderCumulativePointsChart(orderedTeams) {
   };
 
   const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
+  const activeHighlight = String(highlightTeam || "").trim();
+  const dimColor = "#a2acb7";
+  const highlightColor = "#0a9d75";
   const rankMarkerOffsetX = 4;
   const rankMarkerOffsetY = -4;
   const endTeamLabelOffsetX = 18;
@@ -1124,8 +1171,12 @@ function renderCumulativePointsChart(orderedTeams) {
 
   const seriesLines = teamSeries
     .map((series, idx) => {
-      const color = linePalette[idx % linePalette.length];
-      const strokeWidth = 2;
+      const isHighlighted = activeHighlight && series.team === activeHighlight;
+      const color = activeHighlight
+        ? (isHighlighted ? highlightColor : dimColor)
+        : linePalette[idx % linePalette.length];
+      const strokeWidth = activeHighlight ? (isHighlighted ? 2.8 : 1.8) : 2;
+      const strokeOpacity = activeHighlight ? (isHighlighted ? "0.98" : "0.72") : "1";
       const points = series.values
         .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
         .join(" ");
@@ -1134,18 +1185,19 @@ function renderCumulativePointsChart(orderedTeams) {
         .map((value, valueIdx) => {
           const cx = xFor(valueIdx);
           const cy = yFor(value);
+          const rankTextClass = activeHighlight && !isHighlighted ? "chart-point-rank chart-point-rank-muted" : "chart-point-rank";
           return `<circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" />
-            <text x="${cx + rankMarkerOffsetX}" y="${cy + rankMarkerOffsetY}" class="chart-point-rank">${escapeHtml(String(value))}</text>`;
+            <text x="${cx + rankMarkerOffsetX}" y="${cy + rankMarkerOffsetY}" class="${rankTextClass}">${escapeHtml(String(value))}</text>`;
         })
         .join("");
 
       const lastRank = series.values.at(-1);
       const endLabel = lastRank
-        ? `<text x="${xFor(rounds.length - 1) + endTeamLabelOffsetX}" y="${yFor(lastRank) + endTeamLabelOffsetY}" class="chart-end-label">${escapeHtml(series.team)}</text>`
+        ? `<text x="${xFor(rounds.length - 1) + endTeamLabelOffsetX}" y="${yFor(lastRank) + endTeamLabelOffsetY}" class="chart-end-label ${activeHighlight && !isHighlighted ? "chart-end-label-muted" : ""}">${escapeHtml(series.team)}</text>`
         : "";
 
       return `
-        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" />
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" />
         ${pointDots}
         ${endLabel}
       `;
@@ -1169,7 +1221,7 @@ function renderCumulativePointsChart(orderedTeams) {
   `;
 }
 
-function renderCumulativeRibbonChart(orderedTeams) {
+function renderCumulativeRibbonChart(orderedTeams, highlightTeam = "") {
   const scoreView = config.views.scores;
   const filtered = state.scores.filter((row) =>
     teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
@@ -1241,6 +1293,9 @@ function renderCumulativeRibbonChart(orderedTeams) {
   };
 
   const linePalette = ["#0a9d75", "#ef6c00", "#1976d2", "#6a1b9a", "#2e7d32", "#c62828", "#00838f", "#5d4037"];
+  const activeHighlight = String(highlightTeam || "").trim();
+  const dimColor = "#a2acb7";
+  const highlightColor = "#0a9d75";
 
   const topTeams = [...teamSeries]
     .sort((a, b) => Number(b.values.at(-1) || 0) - Number(a.values.at(-1) || 0))
@@ -1265,26 +1320,85 @@ function renderCumulativeRibbonChart(orderedTeams) {
     })
     .join("");
 
-  const ribbons = teamSeries
+  const ribbonSegments = teamSeries
     .map((series, idx) => {
-      const color = linePalette[idx % linePalette.length];
+      const isHighlighted = activeHighlight && series.team === activeHighlight;
+      const color = activeHighlight
+        ? (isHighlighted ? highlightColor : dimColor)
+        : linePalette[idx % linePalette.length];
       const isTop = topTeamSet.has(series.team);
       const linePoints = series.values
         .map((value, valueIdx) => `${xFor(valueIdx)},${yFor(value)}`)
         .join(" ");
       const pointDots = series.values
-        .map((value, valueIdx) => `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${isTop ? "2.6" : "1.9"}" fill="${color}" fill-opacity="${isTop ? "0.95" : "0.6"}" />`)
+        .map((value, valueIdx) => {
+          const dotRadius = activeHighlight ? (isHighlighted ? "2.8" : "2") : (isTop ? "2.6" : "1.9");
+          const dotOpacity = activeHighlight ? (isHighlighted ? "0.95" : "0.55") : (isTop ? "0.95" : "0.6");
+          return `<circle cx="${xFor(valueIdx)}" cy="${yFor(value)}" r="${dotRadius}" fill="${color}" fill-opacity="${dotOpacity}" />`;
+        })
         .join("");
 
-      const endValue = series.values.at(-1);
-      const endLabel = typeof endValue === "number"
-        ? `<text x="${xFor(rounds.length - 1) + 8}" y="${yFor(endValue) + 4}" class="chart-end-label ${isTop ? "chart-end-label-strong" : ""}">${escapeHtml(series.team)}</text>`
-        : "";
+      const lineOpacity = activeHighlight ? (isHighlighted ? "0.92" : "0.5") : (isTop ? "0.9" : "0.45");
+      const lineWidth = activeHighlight ? (isHighlighted ? "2.4" : "1.4") : (isTop ? "2.2" : "1.4");
 
-      return `
-        <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${isTop ? "0.9" : "0.45"}" stroke-width="${isTop ? "2.2" : "1.4"}" />
+      const endValue = series.values.at(-1);
+      const labelClass = `chart-end-label ${isTop ? "chart-end-label-strong" : ""} ${activeHighlight && !isHighlighted ? "chart-end-label-muted" : ""}`.trim();
+      const endLabelEntry = typeof endValue === "number"
+        ? {
+            team: series.team,
+            color,
+            className: labelClass,
+            anchorX: xFor(rounds.length - 1),
+            anchorY: yFor(endValue)
+          }
+        : null;
+
+      return {
+        markup: `
+        <polyline points="${linePoints}" fill="none" stroke="${color}" stroke-opacity="${lineOpacity}" stroke-width="${lineWidth}" />
         ${pointDots}
-        ${endLabel}
+      `,
+        endLabelEntry
+      };
+    })
+    ;
+
+  const ribbons = ribbonSegments.map((segment) => segment.markup).join("");
+
+  const labelEntries = ribbonSegments
+    .map((segment) => segment.endLabelEntry)
+    .filter(Boolean)
+    .sort((a, b) => a.anchorY - b.anchorY);
+
+  const labelMinGap = 12;
+  const labelMinY = padTop + 8;
+  const labelMaxY = height - padBottom - 4;
+
+  let previousY = labelMinY - labelMinGap;
+  labelEntries.forEach((entry) => {
+    entry.labelY = Math.max(entry.anchorY, previousY + labelMinGap);
+    previousY = entry.labelY;
+  });
+
+  for (let idx = labelEntries.length - 1; idx >= 0; idx -= 1) {
+    const entry = labelEntries[idx];
+    if (entry.labelY > labelMaxY) {
+      entry.labelY = labelMaxY;
+    }
+    if (idx < labelEntries.length - 1) {
+      const next = labelEntries[idx + 1];
+      entry.labelY = Math.min(entry.labelY, next.labelY - labelMinGap);
+    }
+    entry.labelY = Math.max(entry.labelY, labelMinY);
+  }
+
+  const endLabels = labelEntries
+    .map((entry) => {
+      const labelX = entry.anchorX + 10;
+      const connectorX2 = labelX - 3;
+      return `
+        <line x1="${entry.anchorX + 1}" y1="${entry.anchorY}" x2="${connectorX2}" y2="${entry.labelY - 3}" class="chart-label-connector" stroke="${entry.color}" />
+        <text x="${labelX}" y="${entry.labelY}" class="${entry.className}">${escapeHtml(entry.team)}</text>
       `;
     })
     .join("");
@@ -1300,6 +1414,7 @@ function renderCumulativeRibbonChart(orderedTeams) {
           ${yTickLines}
           ${xLabels}
           ${ribbons}
+          ${endLabels}
         </svg>
       </div>
     </section>
@@ -1497,6 +1612,7 @@ function resetPortal() {
   state.leagueValue = null;
   state.leagueName = "";
   state.selectedTeam = "";
+  state.highlightTeam = "";
   state.teamSearch = "";
   state.activeTab = "games";
   state.detailMetric = "wins";
