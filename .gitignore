@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Node / frontend dependencies
+node_modules/
+package-lock.json
+
+# Supabase local temp files
+supabase/.temp/
