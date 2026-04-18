@@ -585,39 +585,38 @@ button.ghost {
 .leaderboard-expand {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
   overflow: hidden;
 }
 
-.leaderboard-expand > summary {
+.leaderboard-expand > summary.leaderboard-card-metrics {
   list-style: none;
   cursor: pointer;
-  padding: 8px 10px;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--ink-soft);
+  border: none;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .leaderboard-expand > summary::-webkit-details-marker {
   display: none;
 }
 
-.leaderboard-expand > summary::after {
-  content: "Show";
-  float: right;
-  font-weight: 500;
+.expand-chevron {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  transition: transform 0.2s ease;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
-.leaderboard-expand[open] {
+.leaderboard-expand[open] > summary.leaderboard-card-metrics {
   background: rgba(10, 157, 117, 0.08);
 }
 
-.leaderboard-expand[open] > summary {
-  background: rgba(10, 157, 117, 0.12);
-}
-
-.leaderboard-expand[open] > summary::after {
-  content: "Hide";
+.leaderboard-expand[open] .expand-chevron {
+  transform: rotate(90deg);
 }
 
 .leaderboard-expand-body {

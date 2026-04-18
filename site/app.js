@@ -1023,9 +1023,15 @@ function renderLeaderboard() {
               const points = Number(row[view.pointsColumn] ?? 0);
               const pointsClass = points > 0 ? "points-positive" : points < 0 ? "points-negative" : "";
               const detailRows = detailRowsByTeam.get(team) || [];
-              const detailMarkup = detailRows.length
+              const metricsContent = `<span><span class="metric-label">Wins:</span> <span class="metric-value">${escapeHtml(String(wins))}</span> <span class="metric-label">of</span> <span class="metric-value">${escapeHtml(String(gamesPlayed))}</span></span>
+                  <span><span class="metric-label">Points:</span> <span class="metric-value ${pointsClass}">${escapeHtml(formatNumber(points, "points"))}</span></span>`;
+
+              const metricsRow = detailRows.length
                 ? `<details class="leaderboard-expand">
-                    <summary>Round Details</summary>
+                    <summary class="leaderboard-card-metrics">
+                      ${metricsContent}
+                      <span class="expand-chevron" aria-hidden="true">&raquo;</span>
+                    </summary>
                     <div class="leaderboard-expand-body">
                       <div class="leaderboard-round-header">
                         <span>Round</span>
@@ -1044,18 +1050,14 @@ function renderLeaderboard() {
                         .join("")}
                     </div>
                   </details>`
-                : "<p class=\"muted\">No round details available.</p>";
+                : `<div class="leaderboard-card-metrics">${metricsContent}</div>`;
 
               return `<article class="leaderboard-card">
                 <div class="leaderboard-card-head">
                   <span class="leaderboard-rank">#${escapeHtml(String(rank))}</span>
                   <strong>${escapeHtml(team)}</strong>
                 </div>
-                <div class="leaderboard-card-metrics">
-                  <span><span class="metric-label">Wins:</span> <span class="metric-value">${escapeHtml(String(wins))}</span> <span class="metric-label">of</span> <span class="metric-value">${escapeHtml(String(gamesPlayed))}</span></span>
-                  <span><span class="metric-label">Points:</span> <span class="metric-value ${pointsClass}">${escapeHtml(formatNumber(points, "points"))}</span></span>
-                </div>
-                ${detailMarkup}
+                ${metricsRow}
               </article>`;
             })
             .join("")}

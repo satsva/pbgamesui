@@ -12,6 +12,7 @@ type WebhookPayload = {
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const ADMIN_EMAIL = Deno.env.get("ADMIN_EMAIL") ?? "";
+const BCC_EMAIL = Deno.env.get("BCC_EMAIL") ?? Deno.env.get("BCC_EMAILS") ?? "";
 const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
 const FROM_EMAIL = Deno.env.get("FROM_EMAIL") ?? "Match Bot <no-reply@example.com>";
 
@@ -101,6 +102,7 @@ Deno.serve(async (req) => {
     ];
 
     const adminRecipients = parseEmailList(ADMIN_EMAIL);
+    const bccRecipients = parseEmailList(BCC_EMAIL);
     const to = teamRecipients.length ? teamRecipients : adminRecipients;
     const cc = teamRecipients.length
       ? [...new Set([...adminRecipients, submitterEmail].filter(Boolean))]
@@ -126,12 +128,14 @@ Deno.serve(async (req) => {
         <tr><td><strong>Winning Team</strong></td><td>${escapeHtml(winningTeam || "-")}</td></tr>
         <tr><td><strong>Comments</strong></td><td>${escapeHtml(comments || "-")}</td></tr>
       </table>
+      <p>For any corrections to the submitted scores, please contact help@startplay.app and copy all the team players.</p>
     `;
 
     const { error: sendError } = await resend.emails.send({
       from: FROM_EMAIL,
       to,
       cc: cc.length ? cc : undefined,
+      bcc: bccRecipients.length ? bccRecipients : undefined,
       subject,
       html
     });
