@@ -34,6 +34,12 @@ window.APP_CONFIG = {
       roundColumn: "round",
       pointsColumn: "points"
     },
+    contact: {
+      name: "vw_schdlgames_contact",
+      teamIdColumn: "team_id",
+      phonesColumn: "phones",
+      playerPhonesColumn: "player_phones"
+    },
     leaderboard: {
       teamColumn: "team_name",
       pointsColumn: "points",

@@ -379,13 +379,33 @@ button.ghost {
 }
 
 .pending-submit-btn {
-  margin-left: 8px;
+  margin-left: 0;
   padding: 4px 9px;
   font-size: 0.78rem;
   border-radius: 999px;
   background: var(--primary);
   color: #fff;
   border: none;
+}
+
+.pending-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sms-team-btn {
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  font-weight: 400;
+  border-radius: 999px;
+  border: 1px solid rgba(10, 111, 86, 0.3);
+  color: #07523f;
+  background: rgba(10, 157, 117, 0.12);
+}
+
+.sms-team-btn:hover {
+  background: rgba(10, 157, 117, 0.2);
 }
 
 .detail-head {

@@ -25,6 +25,7 @@ const state = {
   activeTab: "games",
   detailMetric: "wins",
   pendingRowsById: {},
+  contactRowsByTeamId: {},
   pendingRowId: "",
   pendingDraft: null,
   games: [],
@@ -384,7 +385,10 @@ function renderGames() {
           const rowId = createPendingRowId(roundName, row, rowIndex);
           state.pendingRowsById[rowId] = row;
           const scoreCell = isPending
-            ? `<button type="button" class="pending-submit-btn" data-row-id="${escapeHtml(rowId)}">Submit Scores</button>`
+            ? `<div class="pending-actions">
+                <button type="button" class="sms-team-btn" data-row-id="${escapeHtml(rowId)}">SMS Team</button>
+                <button type="button" class="pending-submit-btn" data-row-id="${escapeHtml(rowId)}">Submit Scores</button>
+              </div>`
             : escapeHtml(scores);
 
           return {
@@ -450,9 +454,19 @@ function createPendingRowId(roundName, row, index) {
   return core;
 }
 
-function onGamesAccordionClick(event) {
+async function onGamesAccordionClick(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+
+  const smsButton = target.closest(".sms-team-btn");
+  if (smsButton) {
+    const rowId = smsButton.dataset.rowId || "";
+    const row = state.pendingRowsById[rowId];
+    if (!row) return;
+    await onSmsTeamClick(row);
+    return;
+  }
+
   const button = target.closest(".pending-submit-btn");
   if (!button) return;
 
@@ -460,6 +474,167 @@ function onGamesAccordionClick(event) {
   const row = state.pendingRowsById[rowId];
   if (!row) return;
   openSubmitModal(rowId, row);
+}
+
+async function onSmsTeamClick(row) {
+  const teamA = String(row.team_a || "").trim();
+  const teamB = String(row.team_b || "").trim();
+
+  if (!teamA || !teamB) {
+    window.alert("Could not determine the teams for this match.");
+    return;
+  }
+
+  try {
+    const contactRow = await fetchContactRowForMatchup(teamA, teamB);
+    if (!contactRow) {
+      window.alert(`No SMS contact details were found for ${teamA} vs ${teamB}.`);
+      return;
+    }
+
+    const view = config.views.contact || {};
+    const phonesColumn = view.phonesColumn || "phones";
+    const playerPhonesColumn = view.playerPhonesColumn || "player_phones";
+
+    const phones = parsePhoneList(contactRow[phonesColumn]);
+    if (!phones.length) {
+      window.alert(`No phone numbers were found for ${teamA} vs ${teamB}.`);
+      return;
+    }
+
+    const playerDetails = String(contactRow[playerPhonesColumn] || "").trim();
+    // Keep reading player_phones for future UX use, but do not block SMS launch with a popup.
+    void playerDetails;
+
+    const defaultMessage = `Hi Team, we are playing this week for M&M Men's League Apr 2026. Team is ${teamA} vs ${teamB}`;
+    openSmsComposer(phones, defaultMessage);
+  } catch (error) {
+    window.alert(`Could not open SMS app: ${error?.message || "unexpected error"}`);
+  }
+}
+
+async function fetchContactRowForMatchup(teamA, teamB) {
+  const view = config.views.contact || {};
+  const viewName = String(view.name || "").trim();
+  if (!viewName) {
+    throw new Error("Contact view is not configured. Add views.contact in site/config.js.");
+  }
+
+  const teamIdColumn = view.teamIdColumn || "team_id";
+  const forwardTeamId = `${teamA} vs ${teamB}`;
+  const reverseTeamId = `${teamB} vs ${teamA}`;
+
+  const cachedForward = state.contactRowsByTeamId[forwardTeamId];
+  if (cachedForward) {
+    return cachedForward;
+  }
+
+  const cachedReverse = state.contactRowsByTeamId[reverseTeamId];
+  if (cachedReverse) {
+    return cachedReverse;
+  }
+
+  const [forward, reverse] = await Promise.all([
+    restSelect(viewName, { filters: [{ column: teamIdColumn, value: forwardTeamId }] }),
+    restSelect(viewName, { filters: [{ column: teamIdColumn, value: reverseTeamId }] })
+  ]);
+
+  const directRow = (forward.data && forward.data[0]) || (reverse.data && reverse.data[0]) || null;
+  if (directRow) {
+    const key = String(directRow[teamIdColumn] || "").trim();
+    if (key) {
+      state.contactRowsByTeamId[key] = directRow;
+    }
+    return directRow;
+  }
+
+  // Fallback: if exact eq lookup misses due spacing/format differences, normalize all rows once.
+  const allContacts = await restSelect(viewName);
+  if (allContacts.error) {
+    throw new Error(allContacts.error.message || "Failed to load contact view.");
+  }
+
+  const targetForward = normalizeMatchupId(forwardTeamId);
+  const targetReverse = normalizeMatchupId(reverseTeamId);
+  const matched = (allContacts.data || []).find((contactRow) => {
+    const id = normalizeMatchupId(contactRow[teamIdColumn]);
+    return id === targetForward || id === targetReverse;
+  }) || null;
+
+  if (matched) {
+    const key = String(matched[teamIdColumn] || "").trim();
+    if (key) {
+      state.contactRowsByTeamId[key] = matched;
+    }
+  }
+
+  return matched;
+}
+
+function normalizeMatchupId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\bvs\.\b/g, "vs")
+    .replace(/\bv\b/g, "vs");
+}
+
+function parsePhoneList(rawPhones) {
+  return String(rawPhones || "")
+    .split(",")
+    .map((phone) => sanitizePhoneNumber(phone))
+    .filter(Boolean);
+}
+
+function sanitizePhoneNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const hasPlusPrefix = raw.startsWith("+");
+  const digitsOnly = raw.replace(/\D/g, "");
+  if (!digitsOnly) {
+    return "";
+  }
+
+  return hasPlusPrefix ? `+${digitsOnly}` : digitsOnly;
+}
+
+function openSmsComposer(phoneNumbers, message) {
+  const uniqueNumbers = [...new Set(phoneNumbers.filter(Boolean))];
+  const recipients = uniqueNumbers.join(",");
+  const body = encodeURIComponent(String(message || ""));
+  const isIos = isIosDevice();
+
+  // iOS 15+ can ignore additional recipients in the classic sms:<numbers>?body=... format.
+  // Use addresses query first, then quickly fall back to the classic URL if needed.
+  const primaryUrl = isIos
+    ? `sms:open?addresses=${encodeURIComponent(recipients)}${body ? `&body=${body}` : ""}`
+    : body
+      ? `sms:${recipients}?body=${body}`
+      : `sms:${recipients}`;
+
+  if (!isIos) {
+    window.location.href = primaryUrl;
+    return;
+  }
+
+  window.location.href = primaryUrl;
+
+  const fallbackUrl = body ? `sms:${recipients}?body=${body}` : `sms:${recipients}`;
+  setTimeout(() => {
+    if (!document.hidden) {
+      window.location.href = fallbackUrl;
+    }
+  }, 350);
+}
+
+function isIosDevice() {
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/i.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 function openSubmitModal(rowId, row) {

@@ -34,6 +34,7 @@ This app is preconfigured for your described views:
 
 - passcode view: `public.passcodeleagueid`
 - scheduled games view: `vw_schdlgames`
+- game contact view: `vw_schdlgames_contact` (`team_id`, `phones`, `player_phones`)
 - scores view: `vw_rpt_ldrboard` filtered with `is_planned = false`
 - leaderboard: computed in app from scores using `wins` (primary) then `points` (tiebreak)
 
