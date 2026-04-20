@@ -51,6 +51,63 @@ function parseEmailList(value: string): string[] {
     .filter(Boolean);
 }
 
+async function isFeatureEnabled(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  featureKey: string,
+  leagueId?: string
+): Promise<boolean> {
+  if (leagueId) {
+    const { data: leagueRow, error: leagueError } = await supabaseAdmin
+      .from("feature_controls")
+      .select("is_enabled")
+      .eq("feature_key", featureKey)
+      .eq("scope", "league")
+      .eq("league_id", leagueId)
+      .maybeSingle();
+
+    if (leagueError) {
+      throw leagueError;
+    }
+
+    if (leagueRow?.is_enabled !== undefined && leagueRow?.is_enabled !== null) {
+      return Boolean(leagueRow.is_enabled);
+    }
+  }
+
+  const { data: globalRow, error: globalError } = await supabaseAdmin
+    .from("feature_controls")
+    .select("is_enabled")
+    .eq("feature_key", featureKey)
+    .eq("scope", "global")
+    .is("league_id", null)
+    .maybeSingle();
+
+  if (globalError) {
+    throw globalError;
+  }
+
+  // If no control row exists, default to enabled.
+  if (globalRow?.is_enabled === undefined || globalRow?.is_enabled === null) {
+    return true;
+  }
+
+  return Boolean(globalRow.is_enabled);
+}
+
+async function areAllFeaturesEnabled(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  featureKeys: string[],
+  leagueId?: string
+): Promise<boolean> {
+  for (const featureKey of featureKeys) {
+    const enabled = await isFeatureEnabled(supabaseAdmin, featureKey, leagueId);
+    if (!enabled) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") {
@@ -77,6 +134,7 @@ Deno.serve(async (req) => {
     const winningTeam = asString(row["Winning Team"]);
     const datePlayed = asString(row.date);
     const league = asString(row.formname);
+    const leagueId = asString(row.league_id || row.formid || row.form_id || "");
     const round = asString(row.round);
     const submitterEmail = asString(row["Your Email"]);
 
@@ -85,6 +143,22 @@ Deno.serve(async (req) => {
     }
 
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const shouldSendEmail = await areAllFeaturesEnabled(
+      supabaseAdmin,
+      ["email_notifications", "notify_match_result_email"],
+      leagueId || undefined
+    );
+
+    if (!shouldSendEmail) {
+      return new Response(
+        JSON.stringify({ ok: true, skipped: true, reason: "email_notifications_disabled" }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
 
     const { data: players, error: playersError } = await supabaseAdmin
       .from("team_players")

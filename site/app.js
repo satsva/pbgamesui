@@ -66,6 +66,7 @@ const els = {
   submitGameInputs: document.querySelectorAll(".game-score-input"),
   submitScoresHint: document.getElementById("submitScoresHint"),
   submitWinningTeam: document.getElementById("submitWinningTeam"),
+  submitWinnerHint: document.getElementById("submitWinnerHint"),
   submitDate: document.getElementById("submitDate"),
   submitEmail: document.getElementById("submitEmail"),
   submitComments: document.getElementById("submitComments"),
@@ -166,6 +167,10 @@ function wireEvents() {
       input.addEventListener("input", onScoreInputChanged);
       input.addEventListener("blur", onScoreInputChanged);
     });
+  }
+  if (els.submitWinningTeam) {
+    els.submitWinningTeam.addEventListener("change", onWinnerSelectionChanged);
+    els.submitWinningTeam.addEventListener("input", onWinnerSelectionChanged);
   }
   if (els.backToEditBtn) {
     els.backToEditBtn.addEventListener("click", () => setSubmitStep("form"));
@@ -503,10 +508,12 @@ async function onSmsTeamClick(row) {
     }
 
     const playerDetails = String(contactRow[playerPhonesColumn] || "").trim();
-    // Keep reading player_phones for future UX use, but do not block SMS launch with a popup.
-    void playerDetails;
-
-    const defaultMessage = `Hi Team, we are playing this week for M&M Men's League Apr 2026. Team is ${teamA} vs ${teamB}`;
+    const defaultMessage = buildSmsTeamMessage({
+      teamA,
+      teamB,
+      phones,
+      playerDetails
+    });
     openSmsComposer(phones, defaultMessage);
   } catch (error) {
     window.alert(`Could not open SMS app: ${error?.message || "unexpected error"}`);
@@ -602,6 +609,108 @@ function sanitizePhoneNumber(value) {
   return hasPlusPrefix ? `+${digitsOnly}` : digitsOnly;
 }
 
+function buildSmsTeamMessage({ teamA, teamB, phones, playerDetails }) {
+  const suffixQueue = (phones || [])
+    .map((phone) => getPhoneSuffix(phone))
+    .filter(Boolean);
+
+  const parsedPlayerPhones = parsePlayerPhoneDetails(playerDetails);
+  const teamAText = formatTeamWithPhoneSuffixes(teamA, parsedPlayerPhones, suffixQueue);
+  const teamBText = formatTeamWithPhoneSuffixes(teamB, parsedPlayerPhones, suffixQueue);
+
+  return `Hi Team, we are playing this week for M&M Men's League Apr 2026. Team is ${teamAText} vs ${teamBText}`;
+}
+
+function formatTeamWithPhoneSuffixes(teamLabel, playerPhoneLookup, suffixQueue) {
+  const players = String(teamLabel || "")
+    .split(/\s*&\s*/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  if (!players.length) {
+    return String(teamLabel || "").trim();
+  }
+
+  const decoratedPlayers = players.map((name) => {
+    const lookupKey = normalizePlayerName(name);
+    const mappedSuffixes = playerPhoneLookup.get(lookupKey) || [];
+    const mappedSuffix = mappedSuffixes.length ? mappedSuffixes.shift() : "";
+    const suffix = mappedSuffix || suffixQueue.shift() || "";
+
+    return suffix ? `${name} (${suffix})` : name;
+  });
+
+  return decoratedPlayers.join(" & ");
+}
+
+function parsePlayerPhoneDetails(rawDetails) {
+  const lookup = new Map();
+  const details = String(rawDetails || "").trim();
+  if (!details) {
+    return lookup;
+  }
+
+  const tokens = details
+    .split(/[,;\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  tokens.forEach((token) => {
+    const pair = parsePlayerPhoneToken(token);
+    if (!pair) {
+      return;
+    }
+
+    const nameKey = normalizePlayerName(pair.name);
+    const suffix = getPhoneSuffix(pair.phone);
+    if (!nameKey || !suffix) {
+      return;
+    }
+
+    const existing = lookup.get(nameKey) || [];
+    existing.push(suffix);
+    lookup.set(nameKey, existing);
+  });
+
+  return lookup;
+}
+
+function parsePlayerPhoneToken(token) {
+  const namedWithParens = token.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+  if (namedWithParens) {
+    return {
+      name: namedWithParens[1].trim(),
+      phone: namedWithParens[2].trim()
+    };
+  }
+
+  const namedWithDelimiter = token.match(/^(.+?)\s*[:=-]\s*(.+)$/);
+  if (namedWithDelimiter) {
+    return {
+      name: namedWithDelimiter[1].trim(),
+      phone: namedWithDelimiter[2].trim()
+    };
+  }
+
+  return null;
+}
+
+function normalizePlayerName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getPhoneSuffix(phoneValue) {
+  const digits = String(phoneValue || "").replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+
+  return digits.length > 4 ? digits.slice(-4) : digits;
+}
+
 function openSmsComposer(phoneNumbers, message) {
   const uniqueNumbers = [...new Set(phoneNumbers.filter(Boolean))];
   const recipients = uniqueNumbers.join(",");
@@ -643,6 +752,7 @@ function openSubmitModal(rowId, row) {
   if (els.submitFormError) {
     els.submitFormError.textContent = "";
   }
+  clearWinnerValidationState();
   els.submitModalError.textContent = "";
   els.pendingSubmitForm.reset();
 
@@ -685,6 +795,7 @@ function closeSubmitModal() {
   if (els.submitFormError) {
     els.submitFormError.textContent = "";
   }
+  clearWinnerValidationState();
   els.submitModalError.textContent = "";
 }
 
@@ -698,6 +809,7 @@ function goToConfirmStep() {
   if (els.submitFormError) {
     els.submitFormError.textContent = "";
   }
+  clearWinnerValidationState();
   els.submitModalError.textContent = "";
   if (!els.pendingSubmitForm.reportValidity()) {
     return;
@@ -727,22 +839,16 @@ function goToConfirmStep() {
     return;
   }
 
-  const selectedWinner = els.submitWinningTeam.value.trim();
-  if (!selectedWinner) {
-    if (els.submitFormError) {
-      els.submitFormError.textContent = "Select the winning team.";
-    }
+  const winnerValidation = validateWinnerSelection({
+    parsedScores,
+    derivedWinner,
+    showRequired: true
+  });
+  if (!winnerValidation.ok) {
     return;
   }
 
-  if (selectedWinner !== derivedWinner) {
-    if (els.submitFormError) {
-      els.submitFormError.textContent = `Please double-check: scores indicate ${derivedWinner} as winner, but you selected ${selectedWinner}.`;
-    }
-    return;
-  }
-
-  const winningTeam = derivedWinner;
+  const winningTeam = winnerValidation.selectedWinner;
 
   const draft = {
     passcode: state.passcode,
@@ -768,20 +874,21 @@ function goToConfirmStep() {
 function renderSubmitConfirmation(draft) {
   els.submitConfirmSummary.innerHTML = `
     <div class="confirm-grid">
-      <div>Team A</div><div>${escapeHtml(draft.teamA)}</div>
-      <div>Team B</div><div>${escapeHtml(draft.teamB)}</div>
-      <div>Scores</div><div>${escapeHtml(draft.scores)}</div>
-      <div>Winning Team</div><div>${escapeHtml(draft.winningTeam)}</div>
-      <div>Date</div><div>${escapeHtml(draft.date)}</div>
-      <div>Your Email</div><div>${escapeHtml(draft.email)}</div>
-      <div>Round</div><div>${escapeHtml(draft.round || "-")}</div>
-      <div>Comments</div><div>${escapeHtml(draft.comments || "-")}</div>
+      <div>Team A</div><div><strong>${escapeHtml(draft.teamA)}</strong></div>
+      <div>Team B</div><div><strong>${escapeHtml(draft.teamB)}</strong></div>
+      <div>Scores</div><div><strong>${escapeHtml(draft.scores)}</strong></div>
+      <div>Winning Team</div><div><strong>${escapeHtml(draft.winningTeam)}</strong></div>
+      <div>Date</div><div><strong>${escapeHtml(draft.date)}</strong></div>
+      <div>Your Email</div><div><strong>${escapeHtml(draft.email)}</strong></div>
+      <div>Round</div><div><strong>${escapeHtml(draft.round || "-")}</strong></div>
+      <div>Comments</div><div><strong>${escapeHtml(draft.comments || "-")}</strong></div>
     </div>
   `;
 }
 
 function onScoreInputChanged() {
   const parsed = parseScoreInputs({ allowEmpty: true });
+  applyScoreInputValidationState(parsed);
   if (els.submitScoresHint) {
     els.submitScoresHint.textContent = parsed.ok
       ? "Enter each game as 11-3 or 11/3. First 3 games are required."
@@ -790,6 +897,7 @@ function onScoreInputChanged() {
 
   if (!parsed.ok || !parsed.games.length) {
     els.submitWinningTeam.value = "";
+    clearWinnerValidationState();
     return;
   }
 
@@ -799,6 +907,73 @@ function onScoreInputChanged() {
   } else {
     els.submitWinningTeam.value = "";
   }
+
+  validateWinnerSelection({ parsedScores: parsed, derivedWinner: autoWinner });
+}
+
+function onWinnerSelectionChanged() {
+  validateWinnerSelection();
+}
+
+function clearWinnerValidationState() {
+  if (els.submitWinnerHint) {
+    els.submitWinnerHint.textContent = "";
+  }
+  if (els.submitWinningTeam) {
+    els.submitWinningTeam.classList.remove("invalid-winner");
+  }
+}
+
+function setWinnerValidationError(message) {
+  if (els.submitWinnerHint) {
+    els.submitWinnerHint.textContent = message;
+  }
+  if (els.submitWinningTeam) {
+    els.submitWinningTeam.classList.add("invalid-winner");
+  }
+}
+
+function validateWinnerSelection({ parsedScores = null, derivedWinner = "", showRequired = false } = {}) {
+  clearWinnerValidationState();
+
+  const selectedWinner = String(els.submitWinningTeam?.value || "").trim();
+  if (!selectedWinner) {
+    if (showRequired) {
+      setWinnerValidationError("Select the winning team.");
+      return { ok: false, selectedWinner: "" };
+    }
+    return { ok: true, selectedWinner: "" };
+  }
+
+  const parsed = parsedScores || parseScoreInputs({ allowEmpty: true });
+  if (!parsed.ok || !parsed.games.length) {
+    return { ok: true, selectedWinner };
+  }
+
+  const winnerFromScores = derivedWinner || deriveWinnerFromScores(parsed.games);
+  if (!winnerFromScores) {
+    return { ok: true, selectedWinner };
+  }
+
+  if (selectedWinner !== winnerFromScores) {
+    setWinnerValidationError(`Please double-check: scores indicate ${winnerFromScores} as winner, but you selected ${selectedWinner}.`);
+    return { ok: false, selectedWinner, derivedWinner: winnerFromScores };
+  }
+
+  return { ok: true, selectedWinner, derivedWinner: winnerFromScores };
+}
+
+function applyScoreInputValidationState(parsed) {
+  const inputs = Array.from(els.submitGameInputs || []);
+  inputs.forEach((input, index) => {
+    const row = input.closest(".score-row");
+    if (!row) {
+      return;
+    }
+
+    const isInvalid = !parsed.ok && typeof parsed.invalidIndex === "number" && parsed.invalidIndex === index;
+    row.classList.toggle("invalid-score", isInvalid);
+  });
 }
 
 function parseScoreInputs({ allowEmpty = false } = {}) {
@@ -816,6 +991,7 @@ function parseScoreInputs({ allowEmpty = false } = {}) {
       if (seenGap) {
         return {
           ok: false,
+          invalidIndex: i,
           message: `Fill game scores in order. Game ${i + 1} cannot be entered before earlier empty games.`
         };
       }
@@ -832,6 +1008,7 @@ function parseScoreInputs({ allowEmpty = false } = {}) {
     if (!match) {
       return {
         ok: false,
+        invalidIndex: i,
         message: `Game ${i + 1} must look like 11-3 or 11/3.`
       };
     }
@@ -841,6 +1018,7 @@ function parseScoreInputs({ allowEmpty = false } = {}) {
     if (Number.isNaN(a) || Number.isNaN(b) || a < 0 || b < 0) {
       return {
         ok: false,
+        invalidIndex: i,
         message: `Game ${i + 1} has an invalid score.`
       };
     }
@@ -848,6 +1026,7 @@ function parseScoreInputs({ allowEmpty = false } = {}) {
     if (a === b) {
       return {
         ok: false,
+        invalidIndex: i,
         message: `Game ${i + 1} cannot end in a tie.`
       };
     }
@@ -856,21 +1035,27 @@ function parseScoreInputs({ allowEmpty = false } = {}) {
   }
 
   if (!games.length && !allowEmpty) {
+    const firstEmptyIndex = inputs.findIndex((input) => !String(input.value || "").trim());
     return {
       ok: false,
+      invalidIndex: firstEmptyIndex >= 0 ? firstEmptyIndex : 0,
       message: "Enter scores for at least 3 games."
     };
   }
 
   if (!allowEmpty && games.length < requiredInputCount) {
+    const missingRequiredIndex = inputs.slice(0, requiredInputCount)
+      .findIndex((input) => !String(input.value || "").trim());
     return {
       ok: false,
+      invalidIndex: missingRequiredIndex >= 0 ? missingRequiredIndex : 0,
       message: "Enter scores for at least the first 3 games."
     };
   }
 
   return {
     ok: true,
+    invalidIndex: null,
     games,
     normalized: games.map((g) => g.normalized).join(",")
   };

@@ -25,7 +25,10 @@
 
     <main class="shell">
       <header class="topbar">
-        <h1>Pickleball League Portal</h1>
+        <h1 class="topbar-title">
+          <img src="./apple-touch-icon.png" alt="Pickleball League logo" class="topbar-logo" />
+          <span>Pickleball League Portal</span>
+        </h1>
         <p>View current games, scores, and leaderboard </p>
       </header>
 
@@ -156,6 +159,7 @@
               <select id="submitWinningTeam" required>
                 <option value="">Select winner</option>
               </select>
+              <small id="submitWinnerHint" class="error"></small>
             </label>
             <label class="required-field">
               <span class="field-label">Date <span class="required-mark" aria-hidden="true">*</span></span>

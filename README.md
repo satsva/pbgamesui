@@ -66,3 +66,61 @@ Leaderboard rows are generated from the score rows for the selected league:
 
 Current setup is intentionally simple. Passcode validation is client-side via Supabase view. For stronger protection later, move passcode verification to a Supabase Edge Function and return only scoped data.
 
+## Feature Controls (Supabase)
+
+This project includes a generic feature control table migration at:
+
+- `supabase/migrations/202604200001_feature_controls.sql`
+
+It creates `public.feature_controls`, which supports:
+
+- global controls (`scope = 'global'`)
+- league-specific overrides (`scope = 'league'` + `league_id`)
+
+The `notify-match-result` Edge Function now checks these feature keys before sending emails:
+
+- `email_notifications` (master email toggle)
+- `notify_match_result_email` (match-result email toggle)
+
+If either is disabled for the current league (or globally), the function skips sending and returns success with `skipped: true`.
+
+### Common SQL operations
+
+Disable all emails globally:
+
+```sql
+update public.feature_controls
+set is_enabled = false
+where feature_key = 'email_notifications'
+	and scope = 'global'
+	and league_id is null;
+```
+
+Disable only match-result emails globally:
+
+```sql
+update public.feature_controls
+set is_enabled = false
+where feature_key = 'notify_match_result_email'
+	and scope = 'global'
+	and league_id is null;
+```
+
+Disable match-result emails for one league:
+
+```sql
+insert into public.feature_controls (feature_key, scope, league_id, is_enabled, description)
+values (
+	'notify_match_result_email',
+	'league',
+	'YOUR_LEAGUE_ID',
+	false,
+	'Temporarily disable match emails for this league.'
+)
+on conflict (feature_key, scope, league_id)
+do update set
+	is_enabled = excluded.is_enabled,
+	description = excluded.description,
+	updated_at = now();
+```
+
