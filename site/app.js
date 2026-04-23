@@ -1315,17 +1315,8 @@ function generateUuid() {
 function renderLeaderboard() {
   const view = config.views.leaderboard;
   const scoreView = config.views.scores;
-  const sortedRows = [...state.leaderboard]
-    .sort((a, b) => {
-      const winsDiff = Number(b[view.winsColumn] ?? 0) - Number(a[view.winsColumn] ?? 0);
-      if (winsDiff !== 0) return winsDiff;
-      const pointsDiff = Number(b[view.pointsColumn] ?? 0) - Number(a[view.pointsColumn] ?? 0);
-      if (pointsDiff !== 0) return pointsDiff;
-      return String(a[view.teamColumn] || "").localeCompare(String(b[view.teamColumn] || ""));
-    });
-  const rankByTeam = new Map(
-    sortedRows.map((row, index) => [String(row[view.teamColumn] || "").trim(), index + 1])
-  );
+  const sortedRows = sortLeaderboardRows(state.leaderboard);
+  const rankByTeam = buildLeaderboardRanks(sortedRows);
   const rows = sortedRows.filter((row) => teamMatch([row[view.teamColumn]]));
 
   const gamesPlayedByTeam = new Map();
@@ -1463,6 +1454,7 @@ function buildTeamColorMap(teams) {
 
 function renderCumulativePointsChart(orderedTeams, highlightTeam = "", teamColorMap = new Map()) {
   const scoreView = config.views.scores;
+  const leaderboardView = config.views.leaderboard;
   const filtered = state.scores.filter((row) =>
     teamMatch([row[scoreView.teamColumn], row[scoreView.opponentColumn]])
   );
@@ -1478,17 +1470,11 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "", teamColor
     return "";
   }
 
-  const allTeams = [...state.leaderboard]
-    .sort((a, b) => {
-      const winsDiff = Number(b[config.views.leaderboard.winsColumn] ?? 0) - Number(a[config.views.leaderboard.winsColumn] ?? 0);
-      if (winsDiff !== 0) return winsDiff;
-      const pointsDiff = Number(b[config.views.leaderboard.pointsColumn] ?? 0) - Number(a[config.views.leaderboard.pointsColumn] ?? 0);
-      if (pointsDiff !== 0) return pointsDiff;
-      return String(a[config.views.leaderboard.teamColumn] || "").localeCompare(String(b[config.views.leaderboard.teamColumn] || ""));
-    })
-    .map((row) => String(row[config.views.leaderboard.teamColumn] || "").trim())
+  const allTeams = sortLeaderboardRows(state.leaderboard)
+    .map((row) => String(row[leaderboardView.teamColumn] || "").trim())
     .filter(Boolean);
 
+  const winsByTeamRound = new Map();
   const pointsByTeamRound = new Map();
   const globalTeamSet = new Set(allTeams);
   state.scores.forEach((row) => {
@@ -1496,29 +1482,52 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "", teamColor
     if (!team || !globalTeamSet.has(team)) return;
 
     const round = String(row[scoreView.roundColumn] || "Round").trim();
+    const winsKey = `${team}::${round}`;
+    winsByTeamRound.set(
+      winsKey,
+      Number(winsByTeamRound.get(winsKey) || 0) + Number(row[scoreView.winsColumn] ?? row[scoreView.winnerFlagColumn] ?? 0)
+    );
+
     const key = `${team}::${round}`;
     pointsByTeamRound.set(key, Number(pointsByTeamRound.get(key) || 0) + Number(row[scoreView.pointsColumn] ?? 0));
   });
 
   const displayedTeams = orderedTeams.filter(Boolean);
+  const cumulativeWinsByTeam = new Map(allTeams.map((team) => [team, 0]));
   const cumulativeByTeam = new Map(allTeams.map((team) => [team, 0]));
   const rankByTeam = new Map(allTeams.map((team) => [team, []]));
 
   rounds.forEach((round) => {
     allTeams.forEach((team) => {
+      const winsKey = `${team}::${round}`;
+      const updatedWins = Number(cumulativeWinsByTeam.get(team) || 0) + Number(winsByTeamRound.get(winsKey) || 0);
+      cumulativeWinsByTeam.set(team, updatedWins);
+
       const key = `${team}::${round}`;
       const updated = Number(cumulativeByTeam.get(team) || 0) + Number(pointsByTeamRound.get(key) || 0);
       cumulativeByTeam.set(team, updated);
     });
 
     const ranked = [...allTeams].sort((teamA, teamB) => {
-      const diff = Number(cumulativeByTeam.get(teamB) || 0) - Number(cumulativeByTeam.get(teamA) || 0);
-      if (diff !== 0) return diff;
+      const winsDiff = Number(cumulativeWinsByTeam.get(teamB) || 0) - Number(cumulativeWinsByTeam.get(teamA) || 0);
+      if (winsDiff !== 0) return winsDiff;
+      const pointsDiff = Number(cumulativeByTeam.get(teamB) || 0) - Number(cumulativeByTeam.get(teamA) || 0);
+      if (pointsDiff !== 0) return pointsDiff;
       return teamA.localeCompare(teamB);
     });
 
+    let previousWins = null;
+    let previousPoints = null;
+    let previousRank = 0;
     ranked.forEach((team, idx) => {
-      rankByTeam.get(team).push(idx + 1);
+      const wins = Number(cumulativeWinsByTeam.get(team) || 0);
+      const points = Number(cumulativeByTeam.get(team) || 0);
+      const rank = previousWins === wins && previousPoints === points ? previousRank : idx + 1;
+      rankByTeam.get(team).push(rank);
+
+      previousWins = wins;
+      previousPoints = points;
+      previousRank = rank;
     });
   });
 
@@ -1615,7 +1624,7 @@ function renderCumulativePointsChart(orderedTeams, highlightTeam = "", teamColor
   return `
     <section class="leaderboard-chart">
       <h4>Rank Movement by Round</h4>
-      <p class="muted">Lower rank is better.</p>
+      <p class="muted">Lower rank is better (ranked by wins, then points).</p>
       <div class="chart-wrap">
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Rank over round bump chart by team">
           <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" class="chart-axis" />
@@ -1833,6 +1842,43 @@ function renderLeaderboardDetail() {
     return;
   }
   els.leaderboardDetailTable.innerHTML = "";
+}
+
+function sortLeaderboardRows(rows) {
+  const view = config.views.leaderboard;
+  return [...rows].sort((a, b) => {
+    const winsDiff = Number(b[view.winsColumn] ?? 0) - Number(a[view.winsColumn] ?? 0);
+    if (winsDiff !== 0) return winsDiff;
+
+    const pointsDiff = Number(b[view.pointsColumn] ?? 0) - Number(a[view.pointsColumn] ?? 0);
+    if (pointsDiff !== 0) return pointsDiff;
+
+    return String(a[view.teamColumn] || "").localeCompare(String(b[view.teamColumn] || ""));
+  });
+}
+
+function buildLeaderboardRanks(sortedRows) {
+  const view = config.views.leaderboard;
+  const rankByTeam = new Map();
+  let previousWins = null;
+  let previousPoints = null;
+  let previousRank = 0;
+
+  sortedRows.forEach((row, index) => {
+    const team = String(row[view.teamColumn] || "").trim();
+    if (!team) return;
+
+    const wins = Number(row[view.winsColumn] ?? 0);
+    const points = Number(row[view.pointsColumn] ?? 0);
+    const rank = previousWins === wins && previousPoints === points ? previousRank : index + 1;
+    rankByTeam.set(team, rank);
+
+    previousWins = wins;
+    previousPoints = points;
+    previousRank = rank;
+  });
+
+  return rankByTeam;
 }
 
 function buildLeaderboardRoundMatrix(metric) {
